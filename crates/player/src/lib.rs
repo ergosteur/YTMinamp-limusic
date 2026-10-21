@@ -609,6 +609,17 @@ impl Player {
         self.decks.volume.load(Ordering::Relaxed)
     }
 
+    /// What the active deck is decoding, as mpv reports it: bitrate (bits/s), sample rate (Hz)
+    /// and channel count. Each is `None` until mpv knows it (between tracks, early in a stream).
+    pub fn audio_info(&self) -> (Option<f64>, Option<i64>, Option<i64>) {
+        let mpv = self.mpv();
+        (
+            mpv.get_property::<f64>("audio-bitrate").ok(),
+            mpv.get_property::<i64>("audio-params/samplerate").ok(),
+            mpv.get_property::<i64>("audio-params/channel-count").ok(),
+        )
+    }
+
     /// Route the audio bytes through a proxy (the app's `proxy` setting). Call before the first
     /// [`Self::load`].
     ///

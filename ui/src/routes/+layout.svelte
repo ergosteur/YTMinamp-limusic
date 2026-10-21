@@ -44,6 +44,10 @@
 	import ImportDialog from '$lib/components/ImportDialog.svelte';
 	import { handleImportDrop, initImport } from '$lib/import.svelte';
 	import MiniPlayer from '$lib/components/MiniPlayer.svelte';
+	import WinampSkin from '$lib/components/WinampSkin.svelte';
+	import AlbumArtWindow from '$lib/components/AlbumArtWindow.svelte';
+	import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+	import OpenUrlWindow from '$lib/components/OpenUrlWindow.svelte';
 	import NowPlaying from '$lib/components/NowPlaying.svelte';
 	import TheaterMode from '$lib/components/TheaterMode.svelte';
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
@@ -198,6 +202,18 @@
 	// what tells the two apart: `mini` gets the widget instead of the app chrome, and none of the
 	// routes below it are ever rendered. Constant for the window's lifetime.
 	const isMini = browser && getCurrentWindow().label === 'mini';
+	// Winamp skin mode (winamp.rs) runs this same SPA in a third window, same reasoning as mini.
+	const isWinamp = browser && getCurrentWindow().label === 'winamp';
+	// Winamp panels floating in windows of their own: album art, the playlist editor, search.
+	const isWinampArt = browser && getCurrentWindow().label === 'winamp-art';
+	const isWinampUrl = browser && getCurrentWindow().label === 'winamp-url';
+	const winampPanels: Record<string, 'playlist' | 'search' | 'eq' | 'lyrics'> = {
+		'winamp-playlist': 'playlist',
+		'winamp-search': 'search',
+		'winamp-eq': 'eq',
+		'winamp-lyrics': 'lyrics'
+	};
+	const winampList = browser ? winampPanels[getCurrentWindow().label] : undefined;
 
 	// Apply the saved accent color before the first paint (ssr=false → nothing renders until now).
 	if (browser) initTheme();
@@ -209,8 +225,8 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini) {
-			// The widget gets the transport keys too. No zoom: it is a fixed-size card.
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl) {
+			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
 			return () => {
@@ -256,6 +272,14 @@
      and no toasts (a banner would cover most of a 560x180 widget). -->
 {#if isMini}
 	<MiniPlayer />
+{:else if isWinamp}
+	<WinampSkin />
+{:else if isWinampArt}
+	<AlbumArtWindow />
+{:else if winampList}
+	<FloatingPanel kind={winampList} />
+{:else if isWinampUrl}
+	<OpenUrlWindow />
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
 	     rounds the corners (the compositor can't round an undecorated window for us on Linux).

@@ -24,6 +24,8 @@ rustypipe_reports/
 /.agents/
 /.claude/
 /CLAUDE.md
+/CLAUDE.local.md
+/dist
 /PHASE1-PROMPT.md
 /RELEASING.md
 /TWEETING.md
@@ -31,3 +33,4 @@ rustypipe_reports/
 /plans
 scripts/bench.sh
 scripts/triage.py
+/.pnpm-store

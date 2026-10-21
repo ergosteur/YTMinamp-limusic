@@ -1,0 +1,11 @@
+[package]
+name = "skin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Classic Winamp 2.x .wsz skin parser — pure Rust, no Tauri/UI dependency"
+
+[dependencies]
+zip = "2"
+thiserror = { workspace = true }
+serde = { workspace = true }

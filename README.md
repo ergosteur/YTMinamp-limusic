@@ -1,3 +1,11 @@
+> **This is ytminamp**, a fork of [Limusic](https://github.com/SimoHypers/limusic) that adds a
+> classic **Winamp 2.x skin mode**: a second "mini player" that renders real `.wsz` skins,
+> opened from the titlebar next to the mini-player button. Everything else is upstream Limusic,
+> unmodified where possible so upstream updates merge cleanly. See
+> [docs/WINAMP-MODE.md](docs/WINAMP-MODE.md), including
+> [credits](docs/WINAMP-MODE.md#credits) for [Webamp](https://github.com/captbaritone/webamp)
+> and the skin authors. The rest of this README is upstream's.
+
 <div align="center">
 
 <img src="./assets/docs/limusic-github-image.png" alt="Limusic Banner" width="100%">

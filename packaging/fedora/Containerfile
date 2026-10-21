@@ -1,0 +1,17 @@
+# Build environment for a native Fedora 44 binary: links against the same system libraries
+# (webkit2gtk4.1, mpv-libs, pulseaudio-libs, gtk3) a Fedora 44 desktop already has, so the result
+# runs there directly — no Nix, no bundling. Used by scripts/build-fedora.sh.
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf -y install \
+      gcc gcc-c++ make pkgconf-pkg-config git curl mold \
+      webkit2gtk4.1-devel gtk3-devel librsvg2-devel openssl-devel dbus-devel \
+      mpv-libs-devel pulseaudio-libs-devel \
+      nodejs npm \
+    && dnf clean all
+
+# Same CLI version upstream's release workflow pins.
+RUN npm install -g pnpm@10 @tauri-apps/cli@2.11.5
+
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH=/root/.cargo/bin:$PATH

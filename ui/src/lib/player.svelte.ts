@@ -958,6 +958,11 @@ export function openMiniPlayer() {
 	api.openMini().catch((e) => toast.error(String(e)));
 }
 
+/** Hand over to the Winamp-skinned window (Rust `winamp.rs`); the app hides to the tray behind it. */
+export function openWinamp() {
+	api.openWinamp().catch((e) => toast.error(String(e)));
+}
+
 /** Advance the repeat mode: off → all → one → off. */
 export function cycleRepeat(): Promise<void> {
 	const r = playback.queue.repeat ?? 'off';

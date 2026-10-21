@@ -776,6 +776,172 @@ pub async fn set_mini_compact(app: tauri::AppHandle, compact: bool) -> Result<()
     crate::mini::set_compact(&app, compact)
 }
 
+// --- Winamp skin mode (winamp.rs) -----------------------------------------------------------
+
+/// Swap the app for the Winamp-skinned window: the main window hides to the tray behind it.
+/// Same main-thread hop as `open_mini` — GTK wants window creation there.
+#[tauri::command]
+pub async fn open_winamp(app: tauri::AppHandle) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(crate::winamp::open(&handle));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|_| "winamp mode never answered".to_string())?
+}
+
+/// Swap back. Same path as the tray, so Winamp mode and the tray can't disagree about what
+/// "show Limusic" means.
+#[tauri::command]
+pub async fn close_winamp(app: tauri::AppHandle) -> Result<(), String> {
+    crate::tray::show_main(&app);
+    Ok(())
+}
+
+/// The skin UI resizing itself (double-size mode, shade mode) — the window has no native resize
+/// handles (`resizable: false`), so this is the only way its size changes.
+#[tauri::command]
+pub async fn resize_winamp(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    crate::winamp::resize(&app, width, height);
+    Ok(())
+}
+
+/// The remembered skin, parsed into sprite sheets (PNG-encoded) + window shape/colors for the
+/// Winamp UI. Falls back to the built-in skin.
+#[tauri::command]
+pub async fn load_wsz_skin(app: tauri::AppHandle) -> Result<crate::winamp::SkinPayload, String> {
+    crate::winamp::load_current(&app).await
+}
+
+/// Switch skins (`None` = built-in) and remember the choice.
+#[tauri::command]
+pub async fn select_wsz_skin(
+    app: tauri::AppHandle,
+    path: Option<String>,
+) -> Result<crate::winamp::SkinPayload, String> {
+    crate::winamp::select(&app, path).await
+}
+
+/// The playing stream's kbps / kHz / channel count, for the Winamp display. Polled: mpv has no
+/// event for these and they only change per track.
+#[tauri::command]
+pub async fn winamp_audio_info(state: St<'_>) -> Result<serde_json::Value, String> {
+    let (bitrate, samplerate, channels) = state.player.audio_info();
+    Ok(serde_json::json!({
+        "kbps": bitrate.map(|b| (b / 1000.0).round() as i64),
+        "khz": samplerate.map(|r| (r as f64 / 1000.0).round() as i64),
+        "channels": channels,
+    }))
+}
+
+/// The skin's right-click menu, popped up without blocking (see `winamp::popup_menu`). Linux
+/// only: elsewhere it fails and the UI falls back to Tauri's menu API, whose popups are modal but
+/// reliable on Windows and macOS.
+#[tauri::command]
+pub async fn winamp_popup_menu(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    items: Vec<crate::winamp::MenuEntry>,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return crate::winamp::popup_menu(&app, window.label().to_owned(), items, x, y);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, window, items, x, y);
+        Err("not on this platform".into())
+    }
+}
+
+/// Float a Winamp panel (`art`, `playlist`, `search`) in its own window. Same main-thread hop as
+/// `open_winamp`.
+#[tauri::command]
+pub async fn open_winamp_panel(
+    app: tauri::AppHandle,
+    kind: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(crate::winamp::open_panel(&handle, &kind, width, height));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|_| "panel window never answered".to_string())?
+}
+
+/// Close a floating panel's window (docking it back, or hiding it).
+#[tauri::command]
+pub async fn close_winamp_panel(app: tauri::AppHandle, kind: String) -> Result<(), String> {
+    crate::winamp::close_panel(&app, &kind);
+    Ok(())
+}
+
+/// A floating panel window resizing itself.
+#[tauri::command]
+pub async fn resize_winamp_panel(
+    app: tauri::AppHandle,
+    kind: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    crate::winamp::resize_panel(&app, &kind, width, height)
+}
+
+/// Winamp mode's remembered UI state (panel placement, EQ, double size, ...).
+#[tauri::command]
+pub async fn winamp_prefs(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    Ok(crate::winamp::ui_prefs(&app))
+}
+
+/// Remember some of Winamp mode's UI state: `patch`'s top-level keys replace the stored ones.
+#[tauri::command]
+pub async fn set_winamp_prefs(
+    app: tauri::AppHandle,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    crate::winamp::merge_ui_prefs(&app, patch)
+}
+
+/// The clutterbar's A: keep every Winamp window above others (remembered).
+#[tauri::command]
+pub async fn set_winamp_always_on_top(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    crate::winamp::set_always_on_top(&app, on)
+}
+
+/// The skins folder's contents, for the skin menu.
+#[tauri::command]
+pub async fn list_wsz_skins(app: tauri::AppHandle) -> Result<crate::winamp::SkinList, String> {
+    crate::winamp::list(&app)
+}
+
+/// Copy a picked `.wsz` into the skins folder; returns its new path.
+#[tauri::command]
+pub async fn import_wsz_skin(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    crate::winamp::import(&app, &path)
+}
+
+/// Show the skins folder in the file manager.
+#[tauri::command]
+pub async fn open_skins_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::winamp::skins_dir(&app)?;
+    #[cfg(target_os = "linux")]
+    let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "linux")]
+    crate::lastfm::unappimage(&mut cmd);
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    cmd.arg(dir).spawn().map_err(|e| format!("couldn't open the skins folder: {e}"))?;
+    Ok(())
+}
+
 /// The arguments this process was launched with, handed over once (#348). See `LAUNCH_ARGS`.
 #[tauri::command]
 pub fn take_launch_args() -> Vec<String> {

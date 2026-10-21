@@ -965,7 +965,7 @@ fn web_url(url: &str) -> Result<tauri::Url, String> {
 /// Same bug class as the bundled-libwayland breakage: our libs shadowing the host's for code we
 /// don't control. Fixed the same way, by scope: strip AppDir paths from the child, keep the user's.
 #[cfg(target_os = "linux")]
-fn unappimage(cmd: &mut std::process::Command) {
+pub(crate) fn unappimage(cmd: &mut std::process::Command) {
     let Some(appdir) = std::env::var("APPDIR").ok().filter(|d| !d.is_empty()) else { return };
     for (key, value) in std::env::vars_os() {
         let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else { continue };

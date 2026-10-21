@@ -4,7 +4,14 @@
   "description": "enables the default permissions",
   "windows": [
     "main",
-    "mini"
+    "mini",
+    "winamp",
+    "winamp-art",
+    "winamp-playlist",
+    "winamp-search",
+    "winamp-eq",
+    "winamp-lyrics",
+    "winamp-url"
   ],
   "permissions": [
     "core:default",
@@ -23,6 +30,7 @@
     "core:window:allow-is-fullscreen",
     "dialog:allow-open",
     "dialog:allow-save",
+    "dialog:allow-message",
     "clipboard-manager:allow-write-text",
     "global-shortcut:default"
   ]

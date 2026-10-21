@@ -32,7 +32,7 @@
 	import AccountMenu from './AccountMenu.svelte';
 	import { appIcon } from '$lib/appicon.svelte';
 	import * as api from '$lib/api';
-	import { openMiniPlayer, playback, prefs, refreshView, toast, ui } from '$lib/player.svelte';
+	import { openMiniPlayer, openWinamp, playback, prefs, refreshView, toast, ui } from '$lib/player.svelte';
 	import { win } from '$lib/win.svelte';
 	import { lt } from '$lib/lt.svelte';
 	import { anchorMenu, fitMenu, NO_ANCHOR } from '$lib/menu';
@@ -295,6 +295,22 @@
 			aria-label={t('a11y.toggle_mini')}
 		>
 			<HugeiconsIcon icon={MinimizeScreenIcon} class="h-4 w-4" />
+		</button>
+
+		<!-- Winamp skin mode: the same idea as the mini player, swapped for a classic Winamp 2.x
+		     skin window instead of the floating widget (winamp.rs). No matching hugeicon exists,
+		     hence the inline glyph — three bars evoking a classic equalizer/skin window. -->
+		<button
+			class="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-accent/10 hover:text-foreground"
+			onclick={openWinamp}
+			title="Winamp skin mode"
+			aria-label="Winamp skin mode"
+		>
+			<svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5">
+				<rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+				<line x1="1.5" y1="5.5" x2="14.5" y2="5.5" />
+				<circle cx="3.5" cy="4" r="0.6" fill="currentColor" stroke="none" />
+			</svg>
 		</button>
 
 		{#if win.chrome === 'off'}

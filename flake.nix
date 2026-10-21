@@ -25,6 +25,7 @@
             pkg-config
             glib-networking
             webkitgtk_4_1
+            libpulseaudio
           ];
         in {
           default = pkgs.mkShell {
@@ -45,6 +46,19 @@
               export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH:$XDG_DATA_DIRS"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath linuxPackages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             '';
+          };
+
+          # Driving/screenshotting the app from scripts, on a private Xvfb display (GNOME's
+          # Xwayland routes XTest through a remote-desktop portal, so synthetic input there
+          # silently goes nowhere). Run the app with GDK_BACKEND=x11 DISPLAY=:99.
+          gui-test = pkgs.mkShell {
+            packages = with pkgs; [
+              xvfb
+              xdotool
+              imagemagick
+              xwininfo
+              scrot
+            ];
           };
         });
     };

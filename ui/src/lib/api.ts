@@ -546,6 +546,87 @@ export const closeMini = () => invoke<void>('close_mini');
 /** Shrink the widget to its compact size, or back (#301). Remembered for the next open. */
 export const setMiniCompact = (compact: boolean) => invoke<void>('set_mini_compact', { compact });
 
+// --- Winamp skin mode (Rust winamp.rs) ----------------------------------------------------------
+/** Hide the app to the tray and open the Winamp-skinned window (a third window running this SPA). */
+export const openWinamp = () => invoke<void>('open_winamp');
+/** Close the Winamp window and bring the app back. */
+export const closeWinamp = () => invoke<void>('close_winamp');
+/** The skin UI resizing its own window (no native resize handles — `resizable: false`). */
+export const resizeWinamp = (width: number, height: number) =>
+	invoke<void>('resize_winamp', { width, height });
+/** The remembered skin, parsed into sprite sheets (PNG data URLs) + window shape/colors for the
+ *  Winamp UI. Falls back to the skin built into the binary. */
+export const loadWszSkin = () => invoke<SkinPayload>('load_wsz_skin');
+/** Switch skins (`null` = built-in) and remember the choice. */
+export const selectWszSkin = (path: string | null) => invoke<SkinPayload>('select_wsz_skin', { path });
+/** The skins folder's `.wsz` files, for the skin menu. */
+export const listWszSkins = () => invoke<SkinList>('list_wsz_skins');
+/** Copy a picked `.wsz` into the skins folder; resolves to its new path. */
+export const importWszSkin = (path: string) => invoke<string>('import_wsz_skin', { path });
+export const openSkinsDir = () => invoke<void>('open_skins_dir');
+/** One entry of the Winamp right-click menu, for the non-blocking GTK popup (winamp.rs). */
+export interface WinampMenuEntry {
+	separator?: boolean;
+	text?: string;
+	id?: string;
+	checked?: boolean;
+	items?: WinampMenuEntry[];
+	enabled?: boolean;
+	/** Shown right-aligned, Winamp style: "Ctrl+L", "Alt+E", "Z". */
+	accel?: string;
+}
+/** Pop up the Winamp menu without blocking; picks arrive as `winamp-menu` events with the id.
+ *  Rejects off Linux, where the caller uses Tauri's menu API instead. */
+export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number) =>
+	invoke<void>('winamp_popup_menu', { items, x, y });
+/** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url';
+/** Float a panel in its own window, or bring that window back if it's up. */
+export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
+	invoke<void>('open_winamp_panel', { kind, width, height });
+export const closeWinampPanel = (kind: WinampPanel) => invoke<void>('close_winamp_panel', { kind });
+/** A floating panel window resizing itself (no WM handles: the skin draws its own corner). */
+export const resizeWinampPanel = (kind: WinampPanel, width: number, height: number) =>
+	invoke<void>('resize_winamp_panel', { kind, width, height });
+/** Winamp mode's remembered UI state (panel placement, EQ, double size, ...). */
+export const winampPrefs = () => invoke<Record<string, unknown>>('winamp_prefs');
+/** Remember some of it: `patch`'s top-level keys replace the stored ones. */
+export const setWinampPrefs = (patch: Record<string, unknown>) =>
+	invoke<void>('set_winamp_prefs', { patch });
+/** Keep every Winamp window above others, or not (remembered). */
+export const setWinampAlwaysOnTop = (on: boolean) => invoke<void>('set_winamp_always_on_top', { on });
+/** The playing stream as mpv decodes it; each field null until mpv knows. */
+export const winampAudioInfo = () =>
+	invoke<{ kbps: number | null; khz: number | null; channels: number | null }>('winamp_audio_info');
+
+export interface SkinList {
+	dir: string;
+	skins: { name: string; path: string }[];
+	/** `null` = the built-in skin. */
+	current: string | null;
+}
+
+export interface SkinSprite {
+	width: number;
+	height: number;
+	pngDataUrl: string;
+}
+
+export interface SkinPayload {
+	sprites: Record<string, SkinSprite>;
+	region: { normal: [number, number][][]; equalizer: [number, number][][] } | null;
+	viscolor: [number, number, number][];
+	pledit: {
+		normal?: string;
+		current?: string;
+		normalBg?: string;
+		selectedBg?: string;
+		mbBg?: string;
+		mbFg?: string;
+		font?: string;
+	};
+}
+
 // --- browse / library (context/08) ---------------------------------------------------------
 /** `params` is a `HomeChip.params` token — omit for the unfiltered feed. */
 export const getHome = (params?: string) => invoke<HomePage>('get_home', { params });

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "limusic",
+  "productName": "ytminamp",
   "version": "1.3.0",
-  "identifier": "com.limusic.desktop",
+  "identifier": "com.ytminamp.desktop",
   "build": {
     "frontendDist": "../ui/build",
     "devUrl": "http://localhost:5183",
@@ -63,9 +63,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [
-        "https://github.com/SimoHypers/limusic/releases/latest/download/latest.json"
-      ],
+      "endpoints": [],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0MENDMzA1NUFGMDI0NTQKUldSVUpQQmFCY01NbENPbW9XOTRvVU9YQ2lCQytOU2RyeDhHNFhkWHlNc1dITkFmbkd1ZTBlM1gK",
       "windows": {
         "installMode": "passive"

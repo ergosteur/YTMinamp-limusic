@@ -38,7 +38,9 @@ mod stats;
 mod taskbar;
 mod tray;
 mod videoproxy;
+mod viz;
 mod webview;
+mod winamp;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -1035,6 +1037,22 @@ pub fn run() {
             commands::open_mini,
             commands::close_mini,
             commands::set_mini_compact,
+            commands::open_winamp,
+            commands::close_winamp,
+            commands::resize_winamp,
+            commands::load_wsz_skin,
+            commands::select_wsz_skin,
+            commands::list_wsz_skins,
+            commands::import_wsz_skin,
+            commands::open_skins_dir,
+            commands::winamp_audio_info,
+            commands::winamp_popup_menu,
+            commands::winamp_prefs,
+            commands::set_winamp_prefs,
+            commands::set_winamp_always_on_top,
+            commands::open_winamp_panel,
+            commands::close_winamp_panel,
+            commands::resize_winamp_panel,
             commands::show_main,
             commands::take_launch_args,
             commands::get_home,
@@ -1161,8 +1179,8 @@ pub fn run() {
                     }
                     // Nothing in the widget closes it, but a WM shortcut still can. Turn that into
                     // the ordinary "back to the app" path — closing it on its own would leave the
-                    // app running with no window at all.
-                    mini::LABEL => {
+                    // app running with no window at all. Winamp mode gets the same treatment.
+                    mini::LABEL | winamp::LABEL => {
                         api.prevent_close();
                         tray::show_main(window.app_handle());
                     }
@@ -1206,7 +1224,8 @@ fn only_ui<R: tauri::Runtime>(
     handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
 ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     move |invoke| {
-        if matches!(invoke.message.webview_ref().label(), "main" | mini::LABEL) {
+        let label = invoke.message.webview_ref().label();
+        if matches!(label, "main" | mini::LABEL | winamp::LABEL) || winamp::is_panel_label(label) {
             return handler(invoke);
         }
         invoke.resolver.reject("not allowed from this webview");
@@ -1354,7 +1373,14 @@ mod tests {
             .invoke_handler(super::only_ui(tauri::generate_handler![ping]))
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
-        for (label, allowed) in [("main", true), ("mini", true), ("cipher", false)] {
+        for (label, allowed) in [
+            ("main", true),
+            ("mini", true),
+            ("winamp", true),
+            ("winamp-art", true),
+            ("winamp-playlist", true),
+            ("cipher", false),
+        ] {
             let wv =
                 tauri::WebviewWindowBuilder::new(&app, label, Default::default()).build().unwrap();
             let res = tauri::test::get_ipc_response(

@@ -40,11 +40,12 @@ pub fn set_available(val: bool) {
     AVAILABLE.store(val, Ordering::Relaxed);
 }
 
-/// Bring the main window back from close-to-tray, minimize, or the mini player. Every "come back"
-/// path — tray menu, tray click, second launch, the widget's restore button — goes through here so
-/// they can't drift apart.
+/// Bring the main window back from close-to-tray, minimize, the mini player, or Winamp mode.
+/// Every "come back" path — tray menu, tray click, second launch, the widget's restore button —
+/// goes through here so they can't drift apart.
 pub fn show_main(app: &AppHandle) {
     crate::mini::close(app);
+    crate::winamp::close(app);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
