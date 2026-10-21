@@ -21,7 +21,8 @@ import {
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
 	togglePanel,
-	toggleShuffle
+	toggleShuffle,
+	zoomLyrics
 } from './skinApi.js';
 import { toggleTimeRemaining } from './input.js';
 import { removeSelected } from './playlistActions.js';
@@ -29,7 +30,7 @@ import { uiState } from './uiState.js';
 
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
- *   | 'playlist' | 'eq' | 'art' | 'lyrics'} KeyAction */
+ *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset'} KeyAction */
 
 /**
  * The action a key press means, or null if it isn't one of ours.
@@ -42,6 +43,12 @@ function actionFor(e) {
 	const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 	if (e.altKey && !ctrl && !e.shiftKey) {
 		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics' })[key] ?? null;
+	}
+	// Lyrics text size, the keys Limusic zooms its own window with. Shift allowed: `+` is
+	// Shift+= on many layouts. The numpad's +, - and 0 give the same keys.
+	if (ctrl && !e.altKey) {
+		const zoom = /** @type {Record<string, KeyAction>} */ ({ '=': 'lyricsBigger', '+': 'lyricsBigger', '-': 'lyricsSmaller', 0: 'lyricsReset' })[key];
+		if (zoom) return zoom;
 	}
 	if (ctrl && !e.altKey && !e.shiftKey) {
 		return /** @type {Record<string, KeyAction>} */ ({ l: 'url', a: 'onTop', 2: 'double', t: 'time' })[key] ?? null;
@@ -93,6 +100,12 @@ export function runKey(action) {
 		case 'art':
 		case 'lyrics':
 			return togglePanel(action);
+		case 'lyricsBigger':
+		case 'lyricsSmaller':
+		case 'lyricsReset':
+			// Only with the lyrics showing: a size change you can't see is a confusing one.
+			if (uiState.lyrics.open) zoomLyrics(action === 'lyricsBigger' ? 1 : action === 'lyricsSmaller' ? -1 : 0);
+			return;
 		case 'remove':
 			if (uiState.pl.open) removeSelected().catch(log('remove'));
 			return;

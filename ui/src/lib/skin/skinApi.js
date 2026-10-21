@@ -2,13 +2,13 @@
 // Tauri command surface ($lib/api) — keeps the renderer decoupled from the rest of the app's API
 // shape, and is the one place that would need to change if a command's name/signature does.
 
-import { emitTo } from '@tauri-apps/api/event';
+import { emit, emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as api from '$lib/api';
 import { playback } from '$lib/player.svelte';
 import { uiState } from './uiState.js';
 import { PL_H, PL_W, VISIBLE_ROWS, listRows, maxScroll } from './render/playlist.js';
-import { dockedLayout } from './layout.js';
+import { LYRICS_W, dockedLayout } from './layout.js';
 import { EQ_H, EQ_W } from './render/equalizer.js';
 import { setScale } from './pixels.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
@@ -260,6 +260,29 @@ export async function applyDoubleSize() {
 	resizeToLayout();
 }
 
+/** The lyrics' text sizes, smallest to largest; 1 is the playlist editor's 11 px. */
+const LYRICS_ZOOM = [0.75, 0.9, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+/**
+ * Lyrics text one size bigger (1), smaller (-1) or back to normal (0). Remembered, and sent to
+ * every Winamp window: the lyrics may be floating in another one.
+ * @param {-1 | 0 | 1} by
+ */
+export function zoomLyrics(by) {
+	const at = LYRICS_ZOOM.reduce(
+		(best, z, i) => (Math.abs(z - uiState.lyrics.zoom) < Math.abs(LYRICS_ZOOM[best] - uiState.lyrics.zoom) ? i : best),
+		0
+	);
+	const zoom = by === 0 ? 1 : LYRICS_ZOOM[Math.max(0, Math.min(LYRICS_ZOOM.length - 1, at + by))];
+	uiState.lyrics.zoom = zoom;
+	savePref('lyricsZoom', zoom);
+	emit(LYRICS_ZOOM_EVENT, zoom).catch(() => {});
+	flashMarquee(`Lyrics size: ${Math.round(zoom * 100)}%`);
+}
+
+/** Tells every Winamp window the lyrics' new size (see `zoomLyrics`). */
+export const LYRICS_ZOOM_EVENT = 'winamp-lyrics-zoom';
+
 /** Remember the EQ's settings (for show: nothing filters the sound yet). */
 export function saveEq() {
 	const { on, auto, preamp, bands } = uiState.eq;
@@ -276,6 +299,8 @@ export async function restorePrefs() {
 	uiState.timeRemaining = pref('timeRemaining', false);
 	uiState.visMode = pref('visMode', 'analyzer');
 	Object.assign(uiState.eq, pref('eq', {}));
+	uiState.lyrics.zoom = pref('lyricsZoom', 1);
+	uiState.lyrics.width = pref('lyricsWidth', LYRICS_W);
 	uiState.doubleSize = pref('doubleSize', false);
 	if (uiState.doubleSize) await applyDoubleSize();
 	/** @typedef {{ open: boolean, dock: any } | null} Placement */

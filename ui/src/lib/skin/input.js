@@ -38,11 +38,14 @@ import {
 	setVolume,
 	stopPlayback,
 	togglePlayPause,
-	toggleShuffle
+	resizeToLayout,
+	toggleShuffle,
+	zoomLyrics
 } from './skinApi.js';
 import { ART_CLOSE, artTitleHeight } from './render/albumArt.js';
 import { EQ_BANDS, eqHit, eqValueAt } from './render/equalizer.js';
 import { LYRICS_WHEEL_ROWS } from './render/lyrics.js';
+import { LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
 import { savePref } from './prefs.js';
 import { uiState } from './uiState.js';
 import { playback } from '$lib/player.svelte';
@@ -51,6 +54,8 @@ import { closeWinamp } from '$lib/api';
 const TITLEBAR_BUTTON_SIZE = { w: 9, h: 9 };
 const PLAYLIST_TOGGLE_SIZE = { w: 23, h: 12 };
 const PL_TITLEBAR_H = 20;
+/** How near docked lyrics' right edge a press resizes them. */
+const LYRICS_EDGE = 6;
 /** A docked list panel's size; floating ones come in their own. */
 const DOCKED = { w: PL_W, h: PL_H };
 
@@ -310,7 +315,12 @@ function tooltipAt(hit) {
 	}
 	if (hit.kind === 'lyrics') {
 		if (onArtClose(hit)) return 'Close lyrics';
-		return 'Lyrics (scroll to look around; double-click the titlebar to float or dock)';
+		return [
+			'Lyrics',
+			'Scroll to look around',
+			'Ctrl+scroll or Ctrl+= / Ctrl+- to zoom, Ctrl+0 to reset',
+			'Double-click the titlebar to float or dock'
+		].join('\n');
 	}
 	if (hit.kind === 'art') {
 		if (onArtClose(hit)) return 'Close album art';
@@ -362,8 +372,14 @@ function tooltipAt(hit) {
  */
 export function attachInput(canvas, host) {
 	current = host;
-	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | null} */
+	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | { what: 'lyricsWidth', left: number } | null} */
 	let drag = null;
+	/** Docked lyrics are resized from their right edge; floating ones have their window's grip. */
+	const onLyricsEdge = (/** @type {Hit | null} */ hit) =>
+		hit?.kind === 'lyrics' &&
+		getCurrentWindow().label === 'winamp' &&
+		hit.px >= hit.w - LYRICS_EDGE &&
+		hit.py >= artTitleHeight(uiState.art.frame);
 	/** The panel whose close button is held down. */
 	let closing = /** @type {import('./layout.js').PanelKind | null} */ (null);
 	/** Where a press on something draggable started: it becomes a window drag once the mouse
@@ -474,7 +490,9 @@ export function attachInput(canvas, host) {
 			return;
 		}
 		if (hit.kind === 'lyrics') {
-			if (onArtClose(hit)) {
+			if (onLyricsEdge(hit)) {
+				drag = { what: 'lyricsWidth', left: hit.x };
+			} else if (onArtClose(hit)) {
 				uiState.lyrics.closePressed = true;
 				closing = 'lyrics';
 			} else if (hit.py < artTitleHeight(uiState.art.frame) && event.detail >= 2) {
@@ -553,6 +571,7 @@ export function attachInput(canvas, host) {
 			const hit = host.hitTest(point.x, point.y);
 			if (hit?.kind === 'lyrics') {
 				event.preventDefault();
+				if (event.ctrlKey || event.metaKey) return zoomLyrics(event.deltaY < 0 ? 1 : -1);
 				uiState.lyrics.nudge += event.deltaY > 0 ? LYRICS_WHEEL_ROWS : -LYRICS_WHEEL_ROWS;
 				return;
 			}
@@ -574,8 +593,11 @@ export function attachInput(canvas, host) {
 	// Native tooltips: the canvas's `title`, retargeted to whatever is under the pointer.
 	canvas.addEventListener('mousemove', (event) => {
 		const { x, y } = canvasPoint(canvas, event);
-		const tip = tooltipAt(host.hitTest(x, y));
+		const hit = host.hitTest(x, y);
+		const tip = onLyricsEdge(hit) ? 'Drag to resize' : tooltipAt(hit);
 		if (canvas.title !== tip) canvas.title = tip;
+		const cursor = drag?.what === 'lyricsWidth' || onLyricsEdge(hit) ? 'ew-resize' : '';
+		if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 	});
 
 	window.addEventListener('mousemove', (event) => {
@@ -597,6 +619,13 @@ export function attachInput(canvas, host) {
 			scrollFromHandleY(drag.kind, y - drag.top, drag.size);
 		} else if (drag.what === 'eq') {
 			setEqSlider(drag.slider, eqValueAt(y - drag.top));
+		} else if (drag.what === 'lyricsWidth') {
+			// Canvas px from the lyrics' left edge, which stays put: no double-size maths needed.
+			const width = Math.round(Math.max(LYRICS_MIN_W, Math.min(LYRICS_MAX_W, cx - drag.left)));
+			if (width !== uiState.lyrics.width) {
+				uiState.lyrics.width = width;
+				resizeToLayout();
+			}
 		}
 	});
 
@@ -611,6 +640,8 @@ export function attachInput(canvas, host) {
 			panelState(drag.kind).draggingScroll = false;
 		} else if (drag?.what === 'eq') {
 			uiState.eq.dragging = null;
+		} else if (drag?.what === 'lyricsWidth') {
+			savePref('lyricsWidth', uiState.lyrics.width);
 		}
 		drag = null;
 		const eqPressed = uiState.eq.pressed;

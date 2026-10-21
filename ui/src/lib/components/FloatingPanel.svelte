@@ -22,7 +22,7 @@
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { attachInput } from '../skin/input.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
-	import { SEARCH_INPUT_ID, flashSearch, followQueue, loadSkin, playIndex, searchKeydown } from '../skin/skinApi.js';
+	import { LYRICS_ZOOM_EVENT, SEARCH_INPUT_ID, flashSearch, followQueue, loadSkin, playIndex, searchKeydown } from '../skin/skinApi.js';
 	import { showPlaylistMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
 	import { drawLyrics } from '../skin/render/lyrics.js';
@@ -58,6 +58,7 @@
 		({ playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics })[kind].open = true;
 		// The EQ's settings live in the remembered prefs, shared with the Winamp window.
 		if (kind === 'eq') loadPrefs().then(() => Object.assign(uiState.eq, pref('eq', {})));
+		if (kind === 'lyrics') loadPrefs().then(() => (uiState.lyrics.zoom = pref('lyricsZoom', 1)));
 		const detachKeys = attachKeys((action) => {
 			// Delete/Enter work on this playlist's own selection.
 			if (kind !== 'playlist' || (action !== 'remove' && action !== 'playSelected')) return false;
@@ -80,6 +81,8 @@
 		if (kind === 'search') requestAnimationFrame(() => requestAnimationFrame(flashSearch));
 		// The Winamp window's ADD/Search when this search box is the one floating.
 		const unlistenFocus = listen('winamp-search-focus', () => flashSearch());
+		// The lyrics' size, changed from the keyboard in any Winamp window.
+		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
 
 		attachInput(canvas, {
 			hitTest: (x, y) => {
@@ -166,7 +169,7 @@
 			} else {
 				const state = lyricsNow();
 				const sung = state.lyrics ? sungLine(state.lyrics) : -1;
-				drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, { x: 0, y: 0, w, h }, uiState.lyrics.closePressed);
+				drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, { x: 0, y: 0, w, h }, uiState.lyrics.closePressed, uiState.lyrics.zoom);
 			}
 		});
 
@@ -174,6 +177,7 @@
 			stopLoop();
 			unlistenSkin.then((f) => f());
 			unlistenFocus.then((f) => f());
+			unlistenZoom.then((f) => f());
 			detachKeys();
 			window.removeEventListener('mousedown', onDown, { capture: true });
 			window.removeEventListener('mousemove', onMove);

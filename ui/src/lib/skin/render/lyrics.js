@@ -3,6 +3,7 @@
 // and lit; the wheel scrolls by hand until the next track.
 import { drawFrame, artFrame, frameInset } from './albumArt.js';
 
+/** At zoom 1: the playlist editor's text size. */
 const LINE_H = 15;
 const FONT_PX = 11;
 
@@ -10,7 +11,7 @@ const FONT_PX = 11;
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 
 /** Wrapped lines, cached per lyrics and width: measuring every frame would be wasteful. */
-let wrapped = { key: '', rows: /** @type {{ text: string, line: number }[]} */ ([]) };
+let wrapped = { key: '', lyricsKey: '', rows: /** @type {{ text: string, line: number }[]} */ ([]) };
 /** The view's scroll, in rows, easing towards where it should be. */
 let shown = 0;
 
@@ -46,8 +47,10 @@ function wrap(ctx, lines, width) {
  * @param {number} nudge rows scrolled by hand
  * @param {Rect} at the whole panel, frame included
  * @param {boolean} closePressed
+ * @param {number} zoom the text size, a factor of the playlist font's
  */
-export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePressed) {
+export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePressed, zoom) {
+	const lineH = LINE_H * zoom;
 	const i = frameInset(artFrame(sprites));
 	const inner = { x: at.x + i.left, y: at.y + i.top, w: at.w - i.left - i.right, h: at.h - i.top - i.bottom };
 	ctx.save();
@@ -56,7 +59,7 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 	ctx.beginPath();
 	ctx.rect(inner.x, inner.y, inner.w, inner.h);
 	ctx.clip();
-	ctx.font = `${FONT_PX}px ${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`;
+	ctx.font = `${Math.round(FONT_PX * zoom)}px ${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	const cx = inner.x + inner.w / 2;
@@ -73,13 +76,15 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		ctx.fillText(message, cx, inner.y + inner.h / 2);
 	} else {
 		const lyrics = state.lyrics;
-		const key = `${lyrics.provider}|${lyrics.lines.length}|${lyrics.lines[0]?.text}|${inner.w}|${ctx.font}`;
+		const lyricsKey = `${lyrics.provider}|${lyrics.lines.length}|${lyrics.lines[0]?.text}`;
+		const key = `${lyricsKey}|${inner.w}|${ctx.font}`;
 		if (wrapped.key !== key) {
-			wrapped = { key, rows: wrap(ctx, lyrics.lines, inner.w - 8) };
-			shown = 0;
+			// New lyrics start from the top; the same ones rewrapped (resized, zoomed) ease over.
+			if (wrapped.lyricsKey !== lyricsKey) shown = 0;
+			wrapped = { key, lyricsKey, rows: wrap(ctx, lyrics.lines, inner.w - 8) };
 		}
 		const rows = wrapped.rows;
-		const visible = inner.h / LINE_H;
+		const visible = inner.h / lineH;
 		// Timed: the sung line's first row in the middle. Untimed: from the top.
 		const sungRow = sung >= 0 ? rows.findIndex((r) => r.line === sung) : -1;
 		const max = Math.max(0, rows.length - visible);
@@ -88,7 +93,7 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		if (Math.abs(target - shown) < 0.01) shown = target;
 		const first = Math.floor(shown);
 		for (let r = first; r < Math.min(rows.length, first + visible + 2); r++) {
-			const y = inner.y + (r - shown) * LINE_H + LINE_H / 2;
+			const y = inner.y + (r - shown) * lineH + lineH / 2;
 			ctx.fillStyle = (rows[r].line === sung ? pledit.current : pledit.normal) ?? '#00ff00';
 			ctx.fillText(rows[r].text, cx, y);
 		}

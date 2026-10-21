@@ -217,10 +217,7 @@ export function showPlaylistMenu(which, at) {
 
 /** Library playlists to play, in Local and YouTube Music sections (LIST, and Play ▸ in the menu). */
 async function libraryItems() {
-	const playlists = await libraryPlaylists().catch((e) => {
-		log('library')(e);
-		return [];
-	});
+	const { playlists, loading } = await libraryPlaylists();
 	// On Repeat is built on this machine from its play counts, so it sits with the local ones.
 	const local = (/** @type {import('$lib/api').BrowseItem} */ p) => api.isLocalPlaylist(p.id) || p.id === api.ON_REPEAT_ID;
 	/** @param {string} header @param {import('$lib/api').BrowseItem[]} group */
@@ -233,7 +230,10 @@ async function libraryItems() {
 			: [];
 	const sections = [
 		section('Local Playlists', playlists.filter(local)),
-		section('YouTube Music Playlists', playlists.filter((p) => !local(p)))
+		// Still on its way (the first menu after opening): said the way Winamp says [Connecting].
+		loading
+			? [{ text: 'YouTube Music Playlists', enabled: false }, { text: '[Retrieving playlists]', enabled: false }]
+			: section('YouTube Music Playlists', playlists.filter((p) => !local(p)))
 	].filter((s) => s.length);
 	return sections.length
 		? sections.flatMap((s, i) => (i ? [SEPARATOR, ...s] : s))

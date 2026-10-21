@@ -54,9 +54,37 @@ export function reverseUpcoming() {
 	return reorderUpcoming((up) => up.reverse()).then(() => flashMarquee('Reversed'));
 }
 
-/** The library's playlists, for the load menu. */
+/** The library's playlists as last fetched, or null before the first fetch has come back. */
+let known = /** @type {import('$lib/api').BrowseItem[] | null} */ (null);
+let fetching = /** @type {Promise<import('$lib/api').BrowseItem[]> | null} */ (null);
+
+/**
+ * Fetch the library's playlists again (one fetch at a time). The account's come from YouTube
+ * Music, seconds away at worst, so menus never wait on this: they show `libraryPlaylists()`.
+ */
+export function refreshLibrary() {
+	fetching ??= api
+		.getLibrary()
+		.then((items) => (known = items.filter((item) => item.kind === 'playlist')))
+		.finally(() => (fetching = null));
+	return fetching;
+}
+
+/**
+ * The library's playlists for a menu, straight away: the last fetch's, refreshed behind it for
+ * next time. Before any fetch has come back, the ones on this machine (SQLite, instant) and
+ * `loading: true` while the account's are still on their way.
+ */
 export async function libraryPlaylists() {
-	return (await api.getLibrary()).filter((item) => item.kind === 'playlist');
+	const refresh = refreshLibrary().catch((e) => {
+		console.error('library failed', e);
+		return [];
+	});
+	if (known) return { playlists: known, loading: false };
+	const local = await api.getLocalPlaylists().catch(() => []);
+	// A fetch that's nearly done (the window's own, from when it opened) is worth a moment.
+	const quick = await Promise.race([refresh, new Promise((r) => setTimeout(() => r(null), 150))]);
+	return quick ? { playlists: /** @type {import('$lib/api').BrowseItem[]} */ (quick), loading: false } : { playlists: local, loading: true };
 }
 
 /** Play a playlist from the library, replacing the queue, as Limusic's own page does. */
@@ -79,6 +107,7 @@ export async function saveQueue(local) {
 	if (local) await api.addToLocalPlaylist(id, items);
 	else for (const item of items) await api.addToPlaylist(id, item.video_id, true);
 	flashMarquee(`Saved ${items.length} tracks`);
+	refreshLibrary().catch(() => {});
 }
 
 /**

@@ -78,6 +78,11 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 | MISC | Sort what plays next by title or artist, or reverse it |
 | LIST | Load a playlist (local and YouTube Music sections; replaces the queue). Some skins label it LOAD LIST |
 
+LIST and the main menu's Play ▸ never wait on YouTube Music: they show the playlists as last
+fetched and refresh them behind the menu for next time (`libraryPlaylists` in
+`playlistActions.js`). The Winamp window fetches them when it opens; until that comes back, a menu
+shows the local playlists (SQLite, instant) and `[Retrieving playlists]` under YouTube Music.
+
 Only upcoming tracks can be removed or moved: the playing row and the history stay put, the
 same rule as Limusic's queue panel. A saved queue is named for when it was saved.
 
@@ -115,6 +120,7 @@ Space keep their meaning.
 | Alt+E, Alt+G, Alt+A, Alt+Y | Playlist editor, equalizer, album art, lyrics |
 | Ctrl+A, Ctrl+2, Ctrl+T | Always on top, double size (Winamp's Ctrl+D is Limusic's previous track), time remaining |
 | Delete, Enter | Remove / play the selected playlist track |
+| Ctrl+= (or +, numpad +), Ctrl+-, Ctrl+0 | Lyrics text bigger, smaller, back to normal (while they're showing); the same keys Limusic zooms its own window with |
 
 A floating panel forwards them to the Winamp window (`winamp-key`), bar Delete/Enter on its own
 playlist.
@@ -133,8 +139,11 @@ are remembered.
 request its own lyrics view makes) in the generic frame titled LYRICS, in the playlist font and
 colours. Timed lyrics light the sung line and keep it centred; the wheel scrolls by hand until the
 next track. Docked, lyrics sit to the right of the whole stack, as tall as the classic main + EQ +
-playlist (464 px) or the stack if taller; album art can't take the right side then. Or floating,
-resizable.
+playlist (464 px) or the stack if taller, 275 px wide until dragged wider or narrower from their
+right edge (150–1200 px); album art can't take the right side then. Or floating, resizable.
+Ctrl+wheel over them (or the keys above) sizes the text, 75–300%, in every window at once
+(`zoomLyrics` in `skinApi.js`, broadcast as `winamp-lyrics-zoom`). The width and text size are
+remembered.
 
 ## Remembered state
 
@@ -224,6 +233,7 @@ Vite server.
 ```bash
 scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminamp
 ./dist/ytminamp
+scripts/build-fedora.sh rpm  # the same, plus dist/ytminamp-<version>-1.x86_64.rpm
 ```
 
 It links against the distro's own webkit2gtk4.1, mpv-libs and pulseaudio-libs (all present on a
@@ -251,7 +261,7 @@ error and the app aborts.
 - A working equalizer (the window is for show); shade mode; oscilloscope.
 - The Media Library window.
 - Multiple selection in the playlist.
-- Snapping floating windows together; remembering panel placement and sizes between sessions.
+- Snapping floating windows together.
 - Search covers songs only (no albums, artists, playlists or typeahead).
 - Fractional desktop scaling (e.g. 125%) blurs the skin evenly: GTK3 renders the window at 1x and
   the compositor scales it. Pixel art can't be both sharp and evenly sized at 1.25x.
@@ -263,6 +273,24 @@ Development happens in a private repository with the full history; the public fo
 snapshot per sync on its `ytminamp` branch (its `master` stays upstream Limusic).
 `scripts/publish-github.sh` exports the committed tree (`git archive`, so nothing uncommitted
 or ignored can leak), mirrors it into a clone of the fork and commits; it never pushes.
+
+### Releases
+
+Tags are `v<Limusic version>-ytminamp.<n>` (`v1.3.0-ytminamp.2`: built on Limusic 1.3.0, our
+second). Builds are unsigned and there's no updater (its endpoints are emptied in
+`tauri.conf.json`), so a release is just installers:
+
+1. Publish and push the `ytminamp` branch, then `gh release create <tag> --target <sha>
+   --prerelease` on the fork.
+2. `gh workflow run ytminamp-{linux,windows,macos}.yml --ref ytminamp -f tag=<tag>`: AppImage +
+   deb, NSIS + MSI, Apple Silicon DMG, each attached to the release by its own run.
+3. The RPM is built here, `scripts/build-fedora.sh rpm`, and attached with
+   `gh release upload`.
+
+The three workflows are generated from upstream's release workflows by
+`scripts/make-release-workflows.py` (tag check, no signing or `latest.json`, our names, a plain
+upload step), so upstream's platform fixes carry over: re-run it after merging upstream changes
+to those files, never edit the generated ones.
 
 ## Credits
 

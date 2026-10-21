@@ -58,6 +58,10 @@ export const uiState = {
 		dock: /** @type {'right' | 'float'} */ ('right'),
 		/** Lines scrolled by hand (wheel) away from the sung one; reset on the next track. */
 		nudge: 0,
+		/** The text size, a factor of the playlist font's (Ctrl+=/-/0, Ctrl+wheel; remembered). */
+		zoom: 1,
+		/** Docked lyrics' width: dragged from their right edge (input.js), remembered. */
+		width: 275,
 		closePressed: false
 	},
 	/** The album art window: beside the main window (left/right), in the stack below, or floating

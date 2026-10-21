@@ -23,6 +23,7 @@
 	import { attachInput } from '../skin/input.js';
 	import { dockedLayout, hitLayout } from '../skin/layout.js';
 	import {
+		LYRICS_ZOOM_EVENT,
 		SEARCH_INPUT_ID,
 		followQueue,
 		flashMarquee,
@@ -38,6 +39,7 @@
 	} from '../skin/skinApi.js';
 	import { showMainMenu, showPlaylistMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
+	import { refreshLibrary } from '../skin/playlistActions.js';
 
 	/** @type {HTMLCanvasElement} */
 	let canvas;
@@ -130,6 +132,8 @@
 			.then(() => pinned)
 			.then(restorePrefs)
 			.catch((e) => logUi('error', `winamp prefs failed: ${e}`));
+		// The menus' playlists (Play ▸, LIST), fetched now so the first right-click needn't wait.
+		refreshLibrary().catch((e) => logUi('warn', `winamp library prefetch failed: ${e}`));
 		/** Double-clicking docked art moves it on: right → below → left → right. */
 		const NEXT_DOCK = /** @type {const} */ ({ right: 'stack', stack: 'left', left: 'right', float: 'right' });
 		attachInput(canvas, {
@@ -188,6 +192,8 @@
 		);
 		// Shortcuts pressed in a floating panel run here.
 		const unlistenKey = listen('winamp-key', (e) => runKey(/** @type {import('../skin/keys.js').KeyAction} */ (e.payload)));
+		// The lyrics' size, changed with Ctrl+wheel over a floating lyrics window.
+		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
 		const detachKeys = attachKeys();
 		// A floating playlist's ADD, and the messages floating panels show in this marquee.
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
@@ -263,7 +269,7 @@
 				if (panel.kind === 'lyrics') {
 					const state = lyricsNow();
 					const sung = state.lyrics ? sungLine(state.lyrics) : -1;
-					drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, panel, uiState.lyrics.closePressed);
+					drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, panel, uiState.lyrics.closePressed, uiState.lyrics.zoom);
 					continue;
 				}
 				ctx.save();
@@ -286,6 +292,7 @@
 			unlistenMarquee.then((f) => f());
 			unlistenClosed.then((f) => f());
 			unlistenKey.then((f) => f());
+			unlistenZoom.then((f) => f());
 			detachKeys();
 		};
 	});

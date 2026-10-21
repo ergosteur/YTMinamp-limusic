@@ -12,8 +12,11 @@ import { uiState } from './uiState.js';
 
 /** @typedef {'search' | 'playlist' | 'art' | 'eq' | 'lyrics'} PanelKind */
 
-/** Docked lyrics: as wide as the stack, and as tall as Winamp's classic main + EQ + playlist. */
+/** Docked lyrics: as wide as the stack until dragged wider or narrower (input.js), and as tall
+ * as Winamp's classic main + EQ + playlist. */
 export const LYRICS_W = MAIN_W;
+export const LYRICS_MIN_W = 150;
+export const LYRICS_MAX_W = 1200;
 const CLASSIC_STACK_H = MAIN_H + EQ_H + PL_H;
 /** @typedef {{ kind: PanelKind, x: number, y: number, w: number, h: number }} Placed */
 
@@ -49,9 +52,9 @@ export function dockedLayout() {
 	// EQ, playlist). Album art can't take that side then (skinApi.js keeps the two apart).
 	const lyricsRight = uiState.lyrics.open && uiState.lyrics.dock === 'right';
 	if (lyricsRight) {
-		panels.push({ kind: 'lyrics', x: mainX + MAIN_W, y: 0, w: LYRICS_W, h: Math.max(CLASSIC_STACK_H, y) });
+		panels.push({ kind: 'lyrics', x: mainX + MAIN_W, y: 0, w: uiState.lyrics.width, h: Math.max(CLASSIC_STACK_H, y) });
 	}
-	const width = mainX + MAIN_W + (side && art.dock === 'right' ? beside.w : 0) + (lyricsRight ? LYRICS_W : 0);
+	const width = mainX + MAIN_W + (side && art.dock === 'right' ? beside.w : 0) + (lyricsRight ? uiState.lyrics.width : 0);
 	const height = lyricsRight ? Math.max(CLASSIC_STACK_H, y) : y;
 	return { mainX, width, height, panels };
 }
