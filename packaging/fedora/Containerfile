@@ -1,12 +1,14 @@
 # Build environment for a native Fedora 44 binary: links against the same system libraries
 # (webkit2gtk4.1, mpv-libs, pulseaudio-libs, gtk3) a Fedora 44 desktop already has, so the result
-# runs there directly — no Nix, no bundling. Used by scripts/build-fedora.sh.
+# runs there directly — no Nix. Used by scripts/build-fedora.sh (the bare binary, or an RPM:
+# the tray's appindicator is what Tauri's bundler insists on finding).
 FROM registry.fedoraproject.org/fedora:44
 
 RUN dnf -y install \
       gcc gcc-c++ make pkgconf-pkg-config git curl mold \
       webkit2gtk4.1-devel gtk3-devel librsvg2-devel openssl-devel dbus-devel \
       mpv-libs-devel pulseaudio-libs-devel \
+      libappindicator-gtk3-devel rpm-build \
       nodejs npm \
     && dnf clean all
 

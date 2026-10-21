@@ -1,0 +1,339 @@
+# GENERATED from upstream's windows-release.yml by scripts/make-release-workflows.py; edit that
+# script, not this file. Upstream's own notes follow, still true except where the script
+# changes things (tags, no updater signing, ytminamp names, the upload).
+#
+name: ytminamp Windows release
+
+# Builds and signs the Windows installers for a release that ALREADY EXISTS, attaches them to it,
+# and adds the `windows-x86_64` entry to latest.json so Windows installs get auto-updates.
+#
+# `scripts/release.sh` on Fedora creates the GitHub release and its .rpm. Publishing it fires this
+# workflow automatically — a few minutes later the Windows assets appear on the same release. Nobody
+# boots Windows. The Linux AppImage is built the same way, by linux-release.yml.
+#
+# It can also be run by hand against an older tag to backfill:
+#   Actions ▸ Windows release binaries ▸ Run workflow ▸ tag = v0.1.4
+#
+# Requires repo secrets (Settings ▸ Secrets and variables ▸ Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/limusic.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  empty string (the key has no password)
+#   LASTFM_API_KEY / LASTFM_API_SECRET  Last.fm credentials (optional — warn-only if absent)
+# Without the signing pair the bundler emits no .sig and this job fails loudly rather than
+# shipping an unsignable update.
+
+# DISPATCH ONLY, ON PURPOSE — do not add `release: published` back. Actions caches are ref-scoped,
+# and a release-triggered run executes on the *tag* ref, so it can never read the cache any previous
+# release wrote. This job was recompiling all of Rust from scratch every single time, 11m25s of a
+# 15m run, while dutifully saving a 0.55 GB cache nothing would ever read. A dispatched run executes
+# on master, so the cache is shared release to release; the checkout below still pins the build to
+# the tag. scripts/release.sh dispatches both workflows.
+# Consequence: publishing a release from the GitHub UI builds nothing. Use the script.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build Windows binaries for (e.g. v0.1.4)
+        required: true
+        type: string
+      dry_run:
+        description: Build and sign, but attach nothing to the release
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write # upload assets onto the release
+
+# Per-workflow, NOT shared with linux-release.yml any more: the two now run in parallel, and the
+# only thing they contend for is latest.json, which the upload step merges with a read-back retry.
+concurrency:
+  group: ytminamp-windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  # Pinned libmpv, served from this repo's `deps` prerelease: shinchiro (mpv-winbuild-cmake) keeps
+  # only ~30 daily builds, so a pin straight to theirs 404s within two months. This one is
+  # libmpv-2.dll from shinchiro's 20260610 build (mpv v0.41.0-744-g304426c39), repacked out of our
+  # own v1.1.0 installer, so it is the exact DLL 1.1.0 and the 1.2.0 RCs shipped. Their later builds
+  # import vulkan-1.dll, which only a GPU driver installs, and 1.2.0 would not start without it
+  # (#436); the import check in the libmpv step refuses that now. Baseline x86_64, NOT the `-v3-`
+  # variant, which requires AVX2 and would crash on older CPUs. libmpv2 needs mpv >= 0.35 (client
+  # API 2.x). Bump deliberately, a new mpv is a new 117 MB DLL in the installer: a 7z with
+  # libmpv-2.dll at its root (a shinchiro `mpv-dev-x86_64-*.7z` works as is), uploaded with
+  # `gh release upload deps <file>`, then update both lines below.
+  MPV_DEV_URL: https://github.com/SimoHypers/limusic/releases/download/deps/libmpv-2-x86_64-20260610-git-304426c.7z
+  MPV_DEV_SHA256: af708edcdf6ed12ac7b2bb31b4cbeba0bf7d4eef345a715ef5de782c0ddd6671
+  MPV_DIR: ${{ github.workspace }}\.libmpv
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # A healthy run is ~13 min, and ~20 on a cold cache. The default is six hours, which is what a
+    # wedged download or a stuck installer build would burn while the release sits incomplete.
+    timeout-minutes: 40
+    steps:
+      - name: Resolve the tag
+        id: rel
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || { echo "::error::no tag to build for"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Actions are pinned to commit SHAs, not tags: `@v4` and `@v2` are mutable refs. This job
+      # holds TAURI_SIGNING_PRIVATE_KEY and produces the installers users auto-update to, so
+      # nothing in it should be able to change under us. To bump one: read the SHA off the action's
+      # release, update the pin and the trailing version comment together.
+      # persist-credentials: false, because nothing after this step uses git and there is no reason to
+      # leave a writable token in .git/config for the rest of the job to find.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.rel.outputs.tag }}
+          persist-credentials: false
+
+      # The tag is the contract: the binaries must be built from the source that tag points at, and
+      # the updater compares tauri.conf.json's version. If they disagree, the version bump never got
+      # committed — stop before shipping a mislabelled installer.
+      #
+      # A dry run is allowed to disagree, because that is the only way to test this workflow against
+      # a branch instead of a published tag. Nothing is uploaded on a dry run, so a mislabelled
+      # build cannot escape.
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "PRERELEASE=false" >> "$GITHUB_ENV"
+          # ytminamp tags: v<the Limusic version it's built on>-ytminamp.<our build>.
+          if [[ "${{ steps.rel.outputs.tag }}" != "v$VERSION-ytminamp."* ]]; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::dry run: built ref is ${{ steps.rel.outputs.tag }}, app version $VERSION"
+            else
+              echo "::error::the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.N"
+              exit 1
+            fi
+          fi
+      # Bake a snapshot of the community player-cipher registry into src-tauri/cipher_configs.json,
+      # which is `include_str!`d into the binary. Nothing needing a deciphered stream URL plays
+      # without a config for the current player.js, and the tracked file is deliberately empty —
+      # the table is refreshed from these same registries at runtime.
+      #
+      # So this only covers the case where that refresh can't happen: a first run on a network that
+      # blocks raw.githubusercontent.com. Without a snapshot that user has no cipher at all and
+      # every restricted track is skipped. It goes stale within days either way, which is fine; the
+      # runtime refresh is what keeps it current.
+      #
+      # NEVER FATAL. These registries are third-party. A release must not fail because one is down,
+      # and shipping the empty table is exactly the behaviour we had before this step existed.
+      - name: Bake in the player-cipher registry
+        shell: bash
+        run: |
+          FARADAY=https://raw.githubusercontent.com/MetrolistGroup/faraday/master/registry/player_configs.json
+          ZEMER=https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json
+          tmp="$(mktemp)"
+          for url in "$FARADAY" "$ZEMER"; do
+            # Validate before overwriting: a 404 body or a half-written file must not replace a
+            # good table with something the app will silently parse as empty.
+            if curl -fsSL --max-time 30 "$url" -o "$tmp" \
+               && jq -e '(.players | objects | length) > 0' "$tmp" >/dev/null 2>&1; then
+              cp "$tmp" src-tauri/cipher_configs.json
+              echo "bundled $(jq '.players | length' "$tmp") player configs from $url"
+              exit 0
+            fi
+            echo "::warning::player-cipher registry unusable: $url"
+          done
+          echo "::warning::no player-cipher registry reachable — shipping the empty table; clients will fetch it at runtime"
+
+      # pnpm before setup-node, so `cache: pnpm` below can find the binary and cache its store.
+      # This step was 44s on Windows against 5s on Linux, all of it re-downloading the same
+      # packages every release. Same shape as website.yml.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Frontend deps
+        shell: bash
+        run: cd ui && pnpm install --frozen-lockfile
+
+      - name: Rust (MSVC)
+        shell: bash
+        run: rustup default stable-msvc
+
+      # RUSTFLAGS is set HERE, before rust-cache, and never in a later step. The action hashes
+      # RUSTFLAGS into its cache key, and cargo hashes it into every unit's fingerprint. Set it
+      # after the action (or scoped to the build step, where it used to live) and the two disagree:
+      # the key stays the same, so the action restores a target dir built with different flags,
+      # cargo rejects every unit and rebuilds from scratch, and then the post step declines to save
+      # the rebuilt artifacts because the key it restored was an exact match. The result is a full
+      # cold compile on every single release, for ever. Keep this step above the cache.
+      #
+      # Two flags go in:
+      #   -L native=…\.libmpv   the mpv.lib synthesised further down (link-time only; libmpv2-sys
+      #                         ships pregenerated bindings and just emits `cargo:rustc-link-lib`)
+      #   rust-lld              LLD instead of MSVC's link.exe. Cargo is the bulk of this job, and
+      #                         with `codegen-units = 1` + thin LTO most of that is the codegen and
+      #                         link of limusic-app itself. The Linux job took its release build
+      #                         from 6m56 to 3m33 by moving to mold; this is the same lever on the
+      #                         platform that has no mold. rust-lld ships inside the toolchain, so
+      #                         there is nothing to install and nothing to pin.
+      #
+      # The rust-lld half is a SOFT fallback on purpose: if rustup moves the binary, warn and build
+      # with link.exe. A linker optimisation must never be the reason a release fails to build.
+      - name: Resolve RUSTFLAGS (linker + libmpv link path)
+        shell: bash
+        run: |
+          set -euo pipefail
+          FLAGS="-L native=${{ github.workspace }}\.libmpv"
+          SYSROOT="$(rustc --print sysroot | tr '\\' '/')"
+          RUST_LLD="$SYSROOT/lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe"
+          if [ -f "$RUST_LLD" ]; then
+            FLAGS="$FLAGS -C linker-flavor=lld-link -C linker=$RUST_LLD"
+            echo "linking with rust-lld ($RUST_LLD)"
+          else
+            echo "::warning::rust-lld not found at $RUST_LLD, falling back to MSVC link.exe"
+          fi
+          echo "RUSTFLAGS=$FLAGS" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=$FLAGS"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: . -> target
+
+      - name: Tauri CLI
+        shell: bash
+        # The npm CLI ships a prebuilt binary — `cargo install tauri-cli` would compile it from
+        # source on every cache miss (~5 min for nothing).
+        #
+        # PINNED, like the actions. `^2` took 2.12.0 the day it was published and broke two legs at
+        # once: its new linuxdeploy stopped bundling libgmp and libpipewire (the bundle check
+        # caught it), and it stopped exporting STATIC_VCRUNTIME=true, which the locked tauri-build
+        # 2.6.3 needs for the hybrid CRT link, so rquickjs-sys no longer linked on Windows. Move it
+        # on purpose, with the tauri crates, and dry-run all three legs before a release.
+        run: npm install -g "@tauri-apps/cli@2.11.5"
+
+      # libmpv is the whole reason Windows builds are a chore. The dev package ships the DLL and a
+      # MinGW import lib (libmpv.dll.a) that the MSVC linker cannot consume, and no .def file — so
+      # synthesise the .def from the DLL's own export table and build a real mpv.lib. The Rust side
+      # just emits `cargo:rustc-link-lib=mpv` (pregenerated bindings, no headers needed).
+      - name: Build the libmpv import library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "$env:MPV_DIR" | Out-Null
+          curl.exe -fsSL -o "$env:MPV_DIR\mpv-dev.7z" "$env:MPV_DEV_URL"
+          if ((Get-FileHash "$env:MPV_DIR\mpv-dev.7z" -Algorithm SHA256).Hash -ne $env:MPV_DEV_SHA256) { throw "mpv-dev.7z does not match MPV_DEV_SHA256" }
+          7z x "$env:MPV_DIR\mpv-dev.7z" -o"$env:MPV_DIR" -y | Out-Null
+          if (-not (Test-Path "$env:MPV_DIR\libmpv-2.dll")) { throw "libmpv-2.dll not found in the dev package — did MPV_DEV_URL change shape?" }
+
+          # dumpbin/lib live in the MSVC toolchain. (cargo itself finds MSVC on its own; this is
+          # only so we can run the two tools.)
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+
+          Set-Location "$env:MPV_DIR"
+          $names = & dumpbin /exports libmpv-2.dll |
+            Select-String -Pattern '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\w+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value }
+          if ($names.Count -lt 50) { throw "parsed only $($names.Count) exports from libmpv-2.dll — dumpbin output format changed?" }
+          @("EXPORTS") + ($names | ForEach-Object { "    $_" }) | Set-Content -Path mpv.def -Encoding ascii
+          & lib /def:mpv.def /name:libmpv-2.dll /out:mpv.lib /machine:x64
+          if (-not (Test-Path "$env:MPV_DIR\mpv.lib")) { throw "lib.exe did not produce mpv.lib" }
+
+          # Every DLL libmpv imports has to be part of Windows itself, or the app cannot start on a PC
+          # that lacks it (#436: vulkan-1.dll comes with GPU drivers, not with Windows). A bump that
+          # adds an import fails here until someone checks the new name ships with Windows and adds it.
+          $system = @('ADVAPI32.dll', 'AVICAP32.dll', 'AVRT.dll', 'bcrypt.dll', 'bcryptprimitives.dll',
+            'CFGMGR32.dll', 'CRYPT32.dll', 'd2d1.dll', 'dwmapi.dll', 'DWrite.dll', 'GDI32.dll', 'IMM32.dll',
+            'IPHLPAPI.DLL', 'KERNEL32.dll', 'Normaliz.dll', 'ntdll.dll', 'ole32.dll', 'OLEAUT32.dll',
+            'OPENGL32.dll', 'Secur32.dll', 'SETUPAPI.dll', 'SHCORE.dll', 'SHELL32.dll', 'SHLWAPI.dll',
+            'USER32.dll', 'UxTheme.dll', 'VERSION.dll', 'WINMM.dll', 'WLDAP32.dll', 'WS2_32.dll')
+          $imports = & dumpbin /dependents libmpv-2.dll |
+            Select-String -Pattern '^\s+(\S+\.dll)\s*$' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value }
+          if ($imports.Count -lt 10) { throw "parsed only $($imports.Count) imports from libmpv-2.dll, dumpbin output format changed?" }
+          $foreign = $imports | Where-Object { $_ -notlike 'api-ms-win-*' -and $system -notcontains $_ }
+          if ($foreign) { throw "libmpv-2.dll imports DLLs that are not part of Windows: $($foreign -join ', ')" }
+          Write-Host "libmpv-2.dll imports $($imports.Count) DLLs, all part of Windows"
+          Write-Host "mpv.lib built from $($names.Count) exports"
+
+          # tauri.windows.conf.json lists libmpv-2.dll under bundle.resources, so the installer
+          # places it next to the exe. Without this the app builds but won't start.
+          Copy-Item "$env:MPV_DIR\libmpv-2.dll" "$env:GITHUB_WORKSPACE\src-tauri\libmpv-2.dll" -Force
+
+      # The gitignored src-tauri/lastfm.keys (read by build.rs) obviously isn't in the checkout —
+      # recreate it from repo secrets so Windows builds scrobble too. Missing secrets are a warning,
+      # not a failure: the app is fully functional without Last.fm.
+      - name: Last.fm API keys
+        shell: bash
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+        run: |
+          if [ -n "$LASTFM_API_KEY" ] && [ -n "$LASTFM_API_SECRET" ]; then
+            printf 'LIMUSIC_LASTFM_API_KEY=%s\nLIMUSIC_LASTFM_API_SECRET=%s\n' \
+              "$LASTFM_API_KEY" "$LASTFM_API_SECRET" > src-tauri/lastfm.keys
+            echo "lastfm.keys written"
+          else
+            echo "::warning::LASTFM_API_KEY / LASTFM_API_SECRET secrets not set — this Windows build ships without Last.fm scrobbling"
+          fi
+
+      - name: Build + sign the installers
+        shell: bash
+        env:
+          # NOTE: RUSTFLAGS is deliberately NOT set here. It is exported to $GITHUB_ENV before
+          # rust-cache runs, so the cache key and cargo's fingerprints agree. See that step.
+        run: |
+          set -euo pipefail
+
+          echo "building with RUSTFLAGS=${RUSTFLAGS:-<unset>}"
+          (cd ui && pnpm build)
+          # beforeBuildCommand emptied: we just ran it. Left on, tauri runs `pnpm build` from the
+          # repo root, which has no package.json, so pnpm's choice between ui/ and website/ is down
+          # to the filesystem — it resolves to ui here and to website on Linux. Working by accident.
+          # A release candidate builds the NSIS installer only. The updater never uses the MSI, and
+          # WiX refuses a version whose prerelease suffix isn't numeric, which -rc.1 isn't.
+          BUNDLES=(); [ "$PRERELEASE" = false ] || BUNDLES=(--bundles nsis)
+          tauri build "${BUNDLES[@]}" --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'   # → target/release/bundle/{nsis,msi}/
+
+      - name: Dry run — built and signed, attaching nothing
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: echo "dry_run - build and signing succeeded; release assets left untouched."
+
+      # Nothing in this job ever launches the app, so a dry run can prove the build succeeded and
+      # not that the result starts. Hand the installer over as a workflow artifact instead: a
+      # toolchain change (the linker above, the mpv import lib) can then be installed and clicked
+      # before it goes anywhere near a real release. Artifacts are not release assets, so no user
+      # sees this, and latest.json is untouched.
+      - name: Dry run, keep the installer as an artifact
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ytminamp-dry-run-${{ steps.rel.outputs.tag }}
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      # No updater in ytminamp (tauri.conf.json), so no latest.json, signatures or beta pointer:
+      # attach the installers to the release and that's it.
+      - name: Attach to the release
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          FILES=(target/release/bundle/nsis/ytminamp_${VERSION}_x64-setup.exe target/release/bundle/msi/ytminamp_${VERSION}_*.msi)
+          [ ${#FILES[@]} -gt 0 ] || { echo "::error::nothing to attach"; find target/release/bundle -maxdepth 2; exit 1; }
+          gh release upload "${{ steps.rel.outputs.tag }}" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          printf 'attached %s\n' "${FILES[@]}"

@@ -1,0 +1,410 @@
+# GENERATED from upstream's macos-release.yml by scripts/make-release-workflows.py; edit that
+# script, not this file. Upstream's own notes follow, still true except where the script
+# changes things (tags, no updater signing, ytminamp names, the upload).
+#
+name: ytminamp macOS release
+
+# Builds, bundles and signs the macOS app for a release that ALREADY EXISTS, attaches the .dmg and
+# the updater tarball, and adds the `darwin-aarch64` entry to latest.json so Mac installs
+# auto-update too.
+#
+# Same shape as windows-release.yml: scripts/release.sh publishes the release and dispatches this.
+# Nobody owns a Mac here, so every check this job can make, it makes.
+#
+# WHY THIS IS MORE THAN `tauri build`. Homebrew's libmpv.2.dylib links against ~40 other Homebrew
+# dylibs (all of ffmpeg, libass, libplacebo, uchardet) by absolute /opt/homebrew path. Copying just
+# libmpv into the bundle produces an app that starts on a machine with `brew install mpv` and
+# nowhere else. So the job runs dylibbundler over the built .app, which walks the whole dependency
+# graph, copies it into Contents/Frameworks and rewrites every install name to @executable_path.
+# That is the macOS counterpart of scripts/fix-appdir-tls.sh, and it has the same consequence:
+# rewriting a Mach-O invalidates its signature, arm64 macOS refuses to execute unsigned code, so the
+# bundle is re-signed (ad-hoc) before it is archived, and the updater .sig is generated afterwards.
+#
+# ARM ONLY. macos-14 is the oldest Apple Silicon runner, and Homebrew bottles are built per macOS
+# version, so the runner's OS is the app's floor exactly like glibc is on Linux: this produces a
+# macOS 14+ arm64 build, which is what `minimumSystemVersion` in tauri.macos.conf.json declares.
+# Intel Macs need a second leg on `macos-13` publishing `darwin-x86_64`; add it when someone asks.
+#
+# NOT SIGNED WITH AN APPLE CERT, so the app is quarantined on first launch and Gatekeeper says the
+# app "is damaged". Users clear it with `xattr -dr com.apple.quarantine /Applications/ytminamp.app`.
+# Fixing that properly is a paid Apple Developer account plus notarization. See RELEASING.md §6.
+#
+# It can also be run by hand against an older tag to backfill:
+#   Actions ▸ macOS release binaries ▸ Run workflow ▸ tag = v0.4.5
+#
+# Requires repo secrets (same set as the other two):
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD   (mandatory, no sig no update)
+#   LASTFM_API_KEY / LASTFM_API_SECRET                               (optional, warn-only)
+
+# DISPATCH ONLY, ON PURPOSE, for the reason spelled out in the other two workflows: Actions caches
+# are ref-scoped, and a run triggered by `release: published` executes on the tag ref, so it can
+# never read the cache the previous release wrote. Dispatching from master shares one cache across
+# releases while the checkout below still pins the build to the tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build macOS binaries for (e.g. v0.4.5)
+        required: true
+        type: string
+      dry_run:
+        description: Build, bundle, sign and verify, but attach nothing to the release
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write # upload assets onto the release
+
+# Per-workflow. All three release jobs run in parallel and contend only for latest.json, which the
+# upload step merges with a read-back retry.
+concurrency:
+  group: ytminamp-macos-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # PINNED. macos-latest tracks the newest macOS, and since every bundled Homebrew dylib is built
+    # for the runner's OS, that would silently raise the floor for users. Oldest arm64 runner wins.
+    runs-on: macos-14
+    # A healthy run is ~15 min, ~25 on a cold cargo cache (brew install mpv alone is a few minutes).
+    timeout-minutes: 45
+    steps:
+      - name: Resolve the tag
+        id: rel
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || { echo "::error::no tag to build for"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Actions pinned to commit SHAs, not tags: `@v4` is mutable and `rust-toolchain@stable` is a
+      # branch. This job holds TAURI_SIGNING_PRIVATE_KEY and builds what users auto-update to, so
+      # nothing in it should be able to change under us.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.rel.outputs.tag }}
+          persist-credentials: false
+
+      # The tag is the contract: the binaries must come from the source that tag points at, and the
+      # updater compares tauri.conf.json's version against it.
+      #
+      # A dry run is allowed to disagree, because that is the only way to test this workflow against
+      # a branch (`tag: master`) instead of a published tag. Nothing is uploaded on a dry run, so a
+      # mislabelled build cannot escape.
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "PRERELEASE=false" >> "$GITHUB_ENV"
+          # ytminamp tags: v<the Limusic version it's built on>-ytminamp.<our build>.
+          if [[ "${{ steps.rel.outputs.tag }}" != "v$VERSION-ytminamp."* ]]; then
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::dry run: built ref is ${{ steps.rel.outputs.tag }}, app version $VERSION"
+            else
+              echo "::error::the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.N"
+              exit 1
+            fi
+          fi
+      # Bake a snapshot of the community player-cipher registry into src-tauri/cipher_configs.json,
+      # which is `include_str!`d into the binary. The tracked file is deliberately empty and the app
+      # refreshes the table at runtime, so this only covers a first run on a network that blocks
+      # raw.githubusercontent.com. Without it that user has no cipher and every restricted track is
+      # skipped.
+      #
+      # NEVER FATAL. These registries are third-party; a release must not fail because one is down.
+      - name: Bake in the player-cipher registry
+        run: |
+          FARADAY=https://raw.githubusercontent.com/MetrolistGroup/faraday/master/registry/player_configs.json
+          ZEMER=https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json
+          tmp="$(mktemp)"
+          for url in "$FARADAY" "$ZEMER"; do
+            # Validate before overwriting: a 404 body must not replace a good table with something
+            # the app will silently parse as empty.
+            if curl -fsSL --max-time 30 "$url" -o "$tmp" \
+               && jq -e '(.players | objects | length) > 0' "$tmp" >/dev/null 2>&1; then
+              cp "$tmp" src-tauri/cipher_configs.json
+              echo "bundled $(jq '.players | length' "$tmp") player configs from $url"
+              exit 0
+            fi
+            echo "::warning::player-cipher registry unusable: $url"
+          done
+          echo "::warning::no player-cipher registry reachable, shipping the empty table; clients will fetch it at runtime"
+
+      # libmpv (the whole point of this being a chore) plus dylibbundler, which does the dependency
+      # walk further down. HOMEBREW_NO_AUTO_UPDATE: `brew update` is a minute of git fetching that
+      # changes nothing about which bottles this job pours.
+      - name: libmpv + dylibbundler
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          HOMEBREW_NO_ENV_HINTS: "1"
+        run: |
+          set -euo pipefail
+          brew install mpv dylibbundler
+          PREFIX="$(brew --prefix)"
+          # The formula could stop shipping libmpv (it is a build option, not the formula's point).
+          # Fail here with a sentence, rather than 200 lines of linker error further down.
+          if [ ! -f "$PREFIX/lib/libmpv.2.dylib" ]; then
+            echo "::error::brew's mpv did not install libmpv.2.dylib into $PREFIX/lib. Does the formula still build libmpv?"
+            ls "$PREFIX/lib" | grep -i mpv || true
+            exit 1
+          fi
+          # LIBRARY_PATH, not RUSTFLAGS: libmpv2-sys emits `cargo:rustc-link-lib=mpv` and the
+          # linker driver honours LIBRARY_PATH, so the link resolves without touching cargo's
+          # fingerprint or Swatinem/rust-cache's key. (See the long warning in windows-release.yml
+          # about what happens when RUSTFLAGS and the cache key disagree.)
+          echo "LIBRARY_PATH=$PREFIX/lib" >> "$GITHUB_ENV"
+          echo "BREW_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+          echo "libmpv: $(cd "$PREFIX/lib" && ls -l libmpv*.dylib | head -3)"
+
+      # pnpm before setup-node, so `cache: pnpm` can find the binary and cache its store.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Frontend deps
+        run: cd ui && pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: . -> target
+          # Nobody here owns a Mac, so this job is the only place a macOS problem can be reproduced,
+          # and every fix costs a full run. Without this, a run that fails anywhere after the
+          # compile throws away six minutes of build and the next attempt starts cold again.
+          cache-on-failure: true
+
+      - name: Tauri CLI
+        # The npm CLI ships a prebuilt binary; `cargo install tauri-cli` would compile it from
+        # source on every cache miss.
+        #
+        # PINNED, like the actions. `^2` took 2.12.0 the day it was published and broke two legs at
+        # once: its new linuxdeploy stopped bundling libgmp and libpipewire (the bundle check
+        # caught it), and it stopped exporting STATIC_VCRUNTIME=true, which the locked tauri-build
+        # 2.6.3 needs for the hybrid CRT link, so rquickjs-sys no longer linked on Windows. Move it
+        # on purpose, with the tauri crates, and dry-run all three legs before a release.
+        run: npm install -g "@tauri-apps/cli@2.11.5"
+
+      # The gitignored src-tauri/lastfm.keys (read by build.rs) is not in the checkout, so recreate
+      # it from repo secrets. Missing secrets are a warning: the app works fine without Last.fm.
+      - name: Last.fm API keys
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+        run: |
+          if [ -n "$LASTFM_API_KEY" ] && [ -n "$LASTFM_API_SECRET" ]; then
+            printf 'LIMUSIC_LASTFM_API_KEY=%s\nLIMUSIC_LASTFM_API_SECRET=%s\n' \
+              "$LASTFM_API_KEY" "$LASTFM_API_SECRET" > src-tauri/lastfm.keys
+            echo "lastfm.keys written"
+          else
+            echo "::warning::LASTFM_API_KEY / LASTFM_API_SECRET secrets not set, this macOS build ships without Last.fm scrobbling"
+          fi
+
+      # Only the .app. The .dmg and the updater tarball are built further down, from the *fixed and
+      # re-signed* bundle: anything tauri packaged here would contain the pre-dylibbundler app.
+      #
+      # createUpdaterArtifacts is turned off for the same reason. Left on, the bundler tars the
+      # unfixed .app and then fails the build asking for the signing key, which is deliberately not
+      # in scope here: the tarball that ships is made and signed further down, after dylibbundler.
+      - name: Build the app bundle
+        run: |
+          set -euo pipefail
+          (cd ui && pnpm build)
+          # beforeBuildCommand emptied because we just ran it. Left on, tauri runs `pnpm build` from
+          # the repo root, which has no package.json, so which frontend package pnpm picks is down
+          # to the filesystem.
+          tauri build --bundles app --config \
+            '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+          [ -d "target/release/bundle/macos/ytminamp.app" ] \
+            || { echo "::error::no .app at target/release/bundle/macos/ytminamp.app"; find target/release/bundle -maxdepth 2; exit 1; }
+
+      # THE step this workflow exists for. dylibbundler walks the binary's dependency graph, copies
+      # every non-system dylib into Contents/Frameworks and rewrites the install names to
+      # @executable_path/../Frameworks. Without it the app links ~40 libraries by absolute
+      # /opt/homebrew path and starts on this runner only.
+      #
+      #   -b  bundle the dependencies      -x  binary to fix        -d  where to put them
+      #   -p  install-name prefix to write -of overwrite existing   -cd create the dir
+      #   -s  extra search path, for the handful of Homebrew dylibs that use @rpath
+      - name: Bundle libmpv and its dependency graph
+        # dylibbundler ASKS, on stdin, when it cannot find a library, and on EOF it spins on the
+        # prompt forever. Without a step timeout that is a 45-minute hang instead of a failure.
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          # The executable inside the bundle is NOT named after the bundle: productName names the
+          # .app, the cargo package names the binary (limusic-app). Ask the bundle rather than
+          # guessing, so a rename of either can't quietly break this.
+          BIN="$APP/Contents/MacOS/$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist")"
+          [ -x "$BIN" ] || { echo "::error::no executable at $BIN"; ls -l "$APP/Contents/MacOS"; exit 1; }
+          echo "EXECUTABLE=$(basename "$BIN")" >> "$GITHUB_ENV"
+          dylibbundler -cd -of -b \
+            -x "$BIN" \
+            -d "$APP/Contents/Frameworks" \
+            -p "@executable_path/../Frameworks" \
+            -s "$BREW_PREFIX/lib" < /dev/null
+          echo "bundled $(ls "$APP/Contents/Frameworks" | wc -l | tr -d ' ') libraries"
+
+      # dylibbundler rewrites EVERY LC_RPATH it finds to the same -p prefix, and Homebrew's libmpv
+      # ships two of them (the Xcode Swift toolchain and /usr/lib/swift). Both become
+      # "@executable_path/../Frameworks/", and dyld refuses to load a Mach-O that lists one rpath
+      # twice: `Library not loaded: ... Reason: duplicate LC_RPATH`. The app then dies the instant
+      # it launches, on every machine including this runner, while `otool -L` stays perfectly clean,
+      # which is exactly why the Homebrew guard below cannot see it.
+      - name: Drop the duplicate rpaths dylibbundler leaves behind
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            # `otool -l` on a non-Mach-O file just prints nothing useful, so no file-type test is
+            # needed; the awk below yields no rpaths and the inner loop does nothing.
+            #
+            # [[:space:]], not \s, for the same BSD-grep/awk reason as the guard further down.
+            # Strip the `path ` prefix and the ` (offset N)` suffix rather than taking $2, so an
+            # rpath containing a space is not silently truncated to its first word.
+            #
+            # `otool -l` prints the load commands of every slice, so on a universal binary one
+            # legitimate rpath per architecture would count as a duplicate and -delete_rpath would
+            # then strip it from all of them. Thin arm64 only here; count per `-arch` if the Intel
+            # leg in the header ever becomes a fat build instead of a second job.
+            otool -l "$f" 2>/dev/null \
+              | awk '/LC_RPATH/{g=1} g&&/^[[:space:]]*path /{sub(/^[[:space:]]*path /, ""); sub(/ \(offset [0-9]+\)$/, ""); print; g=0}' \
+              | sort | uniq -c | while read -r n rp; do
+                  [ "$n" -gt 1 ] || continue
+                  # -delete_rpath removes ONE matching entry per call, so repeat it n-1 times and
+                  # leave the last copy in place.
+                  echo "${f#$APP/}: dropping $((n - 1)) duplicate rpath(s) $rp"
+                  i=1
+                  while [ "$i" -lt "$n" ]; do
+                    install_name_tool -delete_rpath "$rp" "$f"
+                    i=$((i + 1))
+                  done
+                done
+          done
+          echo "rpath tables deduplicated"
+
+      # Ad-hoc signature. Not an Apple Developer identity (see the header), but arm64 macOS will not
+      # execute a Mach-O with no valid signature at all, and every install-name and rpath rewrite
+      # invalidated the one the linker put there. This is the difference between an app that opens
+      # and one that dies with "Killed: 9".
+      - name: Re-sign the bundle
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # Regression guard for the dedupe step above, placed after the re-sign so it inspects the
+      # bundle in exactly the state that gets archived. A duplicate LC_RPATH is invisible to
+      # `otool -L` and to `codesign --verify`, so without this check the first symptom is the
+      # shipped .dmg refusing to start on every user's Mac.
+      - name: Check no Mach-O lists a duplicate rpath
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          # No `|| true` here, unlike the Homebrew guard: that one needs it because grep exits 1 on
+          # every clean file, whereas uniq -d exits 0, so a non-zero pipeline here means otool
+          # could not read the file. errexit does not reach inside a command substitution (and
+          # macOS ships bash 3.2, which has no inherit_errexit to change that), so turn the failure
+          # into a line of output instead. A guard that reports success over files it never managed
+          # to inspect is worse than no guard.
+          DUPES="$(find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            otool -l "$f" 2>/dev/null \
+              | awk '/LC_RPATH/{g=1} g&&/^[[:space:]]*path /{sub(/^[[:space:]]*path /, ""); sub(/ \(offset [0-9]+\)$/, ""); print; g=0}' \
+              | sort | uniq -d | sed "s|^|${f#$APP/} <- |" \
+              || echo "${f#$APP/} <- COULD NOT INSPECT, otool failed"
+          done)"
+          if [ -n "$DUPES" ]; then
+            echo "::error::the rpath check did not come back clean:"
+            echo "$DUPES"
+            echo "An rpath on the right is one a Mach-O lists twice, which dyld refuses to load;"
+            echo "the dedupe step above should have removed it. COULD NOT INSPECT means the bundle"
+            echo "was never fully checked."
+            exit 1
+          fi
+          echo "every rpath table is free of duplicates"
+
+      # The regression test for this workflow, and the only one available without a Mac in hand:
+      # nothing in the bundle may still point at Homebrew. A single missed dependency is an app that
+      # launches here and dies on every user's machine, which is exactly the class of bug the
+      # foreign-distro checks catch on Linux.
+      - name: Check nothing still links to Homebrew
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          # [[:space:]], not \s: this runs under BSD grep, whose POSIX regex has no \s, and a
+          # pattern that quietly matches nothing is worse than no guard at all.
+          #
+          # `|| true` on the inner pipeline is load-bearing: grep exits 1 on every clean file, and
+          # under `set -e` + pipefail that would abort the command substitution, failing the step
+          # on exactly the builds that are fine.
+          LEAKS="$(find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            otool -L "$f" 2>/dev/null | tail -n +2 \
+              | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' \
+              | sed "s|^|${f#$APP/} <- |" || true
+          done)"
+          if [ -n "$LEAKS" ]; then
+            echo "::error::the bundle still links libraries from Homebrew, so it only runs on a machine that has them:"
+            echo "$LEAKS"
+            echo "Add the missing search path to the dylibbundler step, or bundle them by hand."
+            exit 1
+          fi
+          echo "every linked library is either bundled or a macOS system library"
+
+      # hdiutil rather than tauri's dmg bundler: that one drives AppleScript to lay the window out
+      # and hangs on headless runners, and this needs to run unattended. The /Applications symlink is
+      # what makes the window a drag-to-install.
+      - name: Build the DMG
+        run: |
+          set -euo pipefail
+          APP=target/release/bundle/macos/ytminamp.app
+          DMG="target/release/bundle/dmg/ytminamp_${VERSION}_aarch64.dmg"
+          STAGE="$(mktemp -d)/YTMinamp"
+          mkdir -p "$STAGE" "$(dirname "$DMG")"
+          # ditto, not cp: it is the copy that preserves a bundle's metadata and signature intact.
+          ditto "$APP" "$STAGE/ytminamp.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "YTMinamp" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+          echo "dmg: $(du -h "$DMG" | cut -f1)"
+
+      - name: Dry run, built and verified, attaching nothing
+        if: ${{ inputs.dry_run }}
+        run: echo "dry_run - every build step and guard passed; release assets left untouched."
+
+      # Nothing in this job launches the app, and nobody here owns a Mac, so the dry run hands the
+      # DMG over as a workflow artifact instead. That is the only way to click through a macOS build
+      # before it ships. Artifacts are not release assets, so no user is exposed to one.
+      - name: Dry run, keep the DMG as an artifact
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ytminamp-macos-dry-run-${{ steps.rel.outputs.tag }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+      # No updater in ytminamp (tauri.conf.json), so no latest.json, signatures or beta pointer:
+      # attach the installers to the release and that's it.
+      - name: Attach to the release
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          FILES=(target/release/bundle/dmg/ytminamp_${VERSION}_aarch64.dmg)
+          [ ${#FILES[@]} -gt 0 ] || { echo "::error::nothing to attach"; find target/release/bundle -maxdepth 2; exit 1; }
+          gh release upload "${{ steps.rel.outputs.tag }}" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          printf 'attached %s\n' "${FILES[@]}"
