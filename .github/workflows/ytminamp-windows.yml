@@ -287,7 +287,6 @@ jobs:
 
       - name: Build + sign the installers
         shell: bash
-        env:
           # NOTE: RUSTFLAGS is deliberately NOT set here. It is exported to $GITHUB_ENV before
           # rust-cache runs, so the cache key and cargo's fingerprints agree. See that step.
         run: |

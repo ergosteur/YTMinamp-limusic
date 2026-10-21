@@ -117,6 +117,9 @@ def common(text: str, platform: str, source: str) -> str:
         "",
         text,
     )
+    # An env: block that held only the key (Windows') is left with just comments: YAML reads that
+    # as an empty value, which Actions rejects. Drop the key, keep the comments.
+    text = re.sub(r"        env:\n((?:          #[^\n]*\n)+)(?=        \w)", r"\1", text)
     live = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
     if any("TAURI_SIGNING_PRIVATE_KEY" in l for l in live):
         sys.exit(f"{source}: a signing-key reference survived")
