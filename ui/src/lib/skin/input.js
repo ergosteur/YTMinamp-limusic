@@ -185,7 +185,7 @@ function percentFromHorizontalX(pos, x) {
 /** @typedef {'search' | 'playlist'} ListKind */
 /**
  * A menu other than the main one: a search result's, or one of the playlist's bottom buttons'.
- * @typedef {{ kind: 'result', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' }} MenuTarget
+ * @typedef {{ kind: 'result', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' | 'lyrics' }} MenuTarget
  */
 /** @typedef {{ w: number, h: number }} Size */
 /**
@@ -285,7 +285,16 @@ const BUTTON_TIPS = /** @type {Record<string, string>} */ ({
 	next: 'Next track',
 	eject: 'Search YouTube Music (show/hide)',
 	playlist: 'Toggle playlist editor',
-	eq: 'Toggle album art'
+	eq: 'Toggle equalizer'
+});
+
+/** The clutterbar, top to bottom. */
+const CLUTTER_TIPS = /** @type {Record<string, () => string>} */ ({
+	'clutter-o': () => 'Options menu',
+	'clutter-a': () => `Always on top: ${uiState.alwaysOnTop ? 'on' : 'off'} (Ctrl+A)`,
+	'clutter-i': () => 'Album art (Alt+A)',
+	'clutter-d': () => `Double size: ${uiState.doubleSize ? 'on' : 'off'} (Ctrl+2)`,
+	'clutter-v': () => `Visualizer: ${uiState.visMode === 'off' ? 'off' : 'on'}`
 });
 
 const REPEAT_TIPS = { off: 'Repeat: off', all: 'Repeat: all', one: 'Repeat: track' };
@@ -319,6 +328,7 @@ function tooltipAt(hit) {
 			'Lyrics',
 			'Scroll to look around',
 			'Ctrl+scroll or Ctrl+= / Ctrl+- to zoom, Ctrl+0 to reset',
+			'Right-click for romanization and translations',
 			'Double-click the titlebar to float or dock'
 		].join('\n');
 	}
@@ -357,6 +367,7 @@ function tooltipAt(hit) {
 	const button = buttonAt(x, y);
 	if (button === 'shuffle') return `Shuffle: ${playback.queue.shuffle ? 'on' : 'off'}`;
 	if (button === 'repeat') return REPEAT_TIPS[playback.queue.repeat ?? 'off'];
+	if (button && CLUTTER_TIPS[button]) return CLUTTER_TIPS[button]();
 	if (button) return BUTTON_TIPS[button] ?? '';
 	if (hits(POSBAR_POS, { w: 248, h: 10 }, x, y)) {
 		return playback.duration > 0 ? `Seek (${clock(playback.position)} / ${clock(playback.duration)})` : 'Seek';
@@ -445,6 +456,8 @@ export function attachInput(canvas, host) {
 		if (i !== null) {
 			uiState.search.selected = i;
 			host.showMenu({ kind: 'result', index: i }, at);
+		} else if (hit?.kind === 'lyrics') {
+			host.showMenu({ kind: 'lyrics' }, at);
 		} else {
 			host.showMenu(null, at);
 		}

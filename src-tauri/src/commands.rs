@@ -807,6 +807,12 @@ pub async fn resize_winamp(app: tauri::AppHandle, width: f64, height: f64) -> Re
     Ok(())
 }
 
+/// Whether a `width`x`height` Winamp window fits its screen (double size checks first).
+#[tauri::command]
+pub fn winamp_fits(app: tauri::AppHandle, width: f64, height: f64) -> bool {
+    crate::winamp::fits(&app, width, height)
+}
+
 /// The remembered skin, parsed into sprite sheets (PNG-encoded) + window shape/colors for the
 /// Winamp UI. Falls back to the built-in skin.
 #[tauri::command]

@@ -40,11 +40,15 @@ import {
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
 	togglePanel,
-	toggleShuffle
+	toggleMilkdrop,
+	toggleShuffle,
+	zoomLyrics
 } from './skinApi.js';
 import { toggleTimeRemaining, toggleVisualizer } from './input.js';
 import { EQ_PRESETS } from './render/equalizer.js';
+import { lyricsNow, lyricsShow, toggleLyricsShow } from './lyrics.js';
 import { zoomFactor } from './pixels.js';
+import { YTMINAMP_RELEASE } from './release.js';
 import { uiState } from './uiState.js';
 import {
 	clearUpcoming,
@@ -254,6 +258,60 @@ export function showPresetsMenu(at) {
 	);
 }
 
+/**
+ * The lyrics panel's menu: Limusic's romanization and translation switches, and the text size.
+ * @param {MenuAt} at
+ */
+export function showLyricsMenu(at) {
+	return popup(async () => {
+		const lines = lyricsNow().lyrics?.lines ?? [];
+		const has = (/** @type {'romanized' | 'translation'} */ what) => lines.some((l) => l[what]);
+		return {
+			items: [
+				{
+					text: has('romanized') ? 'Romanization' : 'Romanization (none for these lyrics)',
+					checked: lyricsShow.romanized,
+					action: () => toggleLyricsShow('romanized')
+				},
+				{
+					text: has('translation') ? 'Translations' : 'Translations (none for these lyrics)',
+					checked: lyricsShow.translated,
+					action: () => toggleLyricsShow('translated')
+				},
+				SEPARATOR,
+				{ text: 'Bigger text', accel: 'Ctrl+=', action: () => zoomLyrics(1) },
+				{ text: 'Smaller text', accel: 'Ctrl+-', action: () => zoomLyrics(-1) },
+				{ text: 'Normal size', accel: 'Ctrl+0', action: () => zoomLyrics(0) }
+			]
+		};
+	}, at);
+}
+
+/**
+ * The MilkDrop window's menu. `controls` is the window's own (MilkdropWindow.svelte).
+ * @param {{ next: () => void, previous: () => void, hardCut: () => void, toggleAuto: () => void,
+ *   auto: boolean, preset: string, toggleFullscreen: () => Promise<void>, close: () => void }} controls
+ * @param {MenuAt} at
+ */
+export function showMilkdropMenu(controls, at) {
+	return popup(
+		async () => ({
+			items: [
+				{ text: controls.preset || 'Loading presets...', enabled: false },
+				SEPARATOR,
+				{ text: 'Next preset', accel: 'N', action: () => controls.next() },
+				{ text: 'Previous preset', accel: 'P', action: () => controls.previous() },
+				{ text: 'Random preset, no blend', action: () => controls.hardCut() },
+				{ text: 'Change presets automatically', checked: controls.auto, action: () => controls.toggleAuto() },
+				SEPARATOR,
+				{ text: 'Fullscreen', accel: 'F', action: () => controls.toggleFullscreen().catch(log('fullscreen')) },
+				{ text: 'Close', accel: 'Ctrl+Shift+K', action: () => controls.close() }
+			]
+		}),
+		at
+	);
+}
+
 /** @param {number} preamp @param {number[]} bands */
 function applyPreset(preamp, bands) {
 	uiState.eq.preamp = preamp;
@@ -265,14 +323,14 @@ function applyPreset(preamp, bands) {
 async function showAbout() {
 	const version = await getVersion().catch(() => '?');
 	await message(
-		`ytminamp ${version}\n\n` +
+		`YTMinamp (limusic) ${version} (ytminamp.${YTMINAMP_RELEASE})\n\n` +
 			'Limusic with a classic Winamp 2.x skin mode.\n\n' +
 			'Built on Limusic (SimoHypers, GPL-3.0-or-later). Skin layout, marquee and analyzer after ' +
 			'Webamp (Jordan Eldredge and contributors, MIT); FFT from vis_classic (Mike Lynch, via ' +
 			'WACUP, MIT). The built-in skin is Nullsoft\u2019s Winamp 2.91 base skin. Winamp is a ' +
 			'trademark of its owner; this is an unofficial fan project.\n\n' +
 			'Full credits: docs/WINAMP-MODE.md',
-		{ title: 'About ytminamp', kind: 'info' }
+		{ title: 'About YTMinamp', kind: 'info' }
 	);
 }
 
@@ -391,7 +449,9 @@ export function showMainMenu(switchSkin, at) {
 					text: 'Visualisation',
 					items: [
 						check('Spectrum analyser', uiState.visMode === 'analyzer', '', () => uiState.visMode !== 'analyzer' && toggleVisualizer()),
-						check('Off', uiState.visMode === 'off', '', () => uiState.visMode !== 'off' && toggleVisualizer())
+						check('Off', uiState.visMode === 'off', '', () => uiState.visMode !== 'off' && toggleVisualizer()),
+						SEPARATOR,
+						check('MilkDrop window', uiState.milkdrop, 'Ctrl+Shift+K', toggleMilkdrop)
 					]
 				},
 				{

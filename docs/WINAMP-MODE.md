@@ -59,6 +59,28 @@ peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from
 Limits: it shows everything playing on that output, not only this app (per-stream monitoring is
 possible with the async pulse API, not done yet); Linux only; no oscilloscope mode yet.
 
+Where there's no live feed (Windows and macOS for now, or Linux without a monitor source) the
+analyzer plays test patterns while music plays rather than sitting empty: sweeps at different
+speeds, a travelling wave, random bars, a staircase, a pulse, a new one every six seconds
+(`ui/src/lib/skin/testPattern.js`). "No live feed" means no `winamp-viz` columns for half a
+second, so it never cuts in on Linux, where silence still arrives as columns.
+
+## MilkDrop (Butterchurn)
+
+Main menu ▸ Visualisation ▸ MilkDrop window, or Ctrl+Shift+K (Winamp's start/stop visualization
+plug-in key), opens `MilkdropWindow.svelte` in a window of its own (`winamp-milkdrop`):
+[Butterchurn](https://github.com/jberg/butterchurn), the WebGL port of MilkDrop Webamp uses,
+playing the [butterchurn-presets](https://github.com/jberg/butterchurn-presets) pack, both MIT and
+loaded only when the window opens. mpv plays outside the webview, so there's no WebAudio to
+analyse: `viz.rs` sends the captured waveform as well (`winamp-wave`, 1024 bytes, silence at 128,
+only while the window is open), and Butterchurn's `render()` takes it directly (no AudioContext at
+all). With no waveform (not Linux), a made-up one keeps it moving while music plays.
+
+Presets change every 20 seconds with a blend; N / P next and previous, F or a double-click
+fullscreen, Esc leaves it. Drag to move, the bottom-right corner to resize (remembered); the
+right-click menu has the rest, including the current preset's name. The other Winamp keys work
+here too.
+
 ## Playlist editor
 
 The PL button docks Winamp's playlist editor under the main window (the window grows by 232 px),
@@ -121,6 +143,7 @@ Space keep their meaning.
 | Ctrl+A, Ctrl+2, Ctrl+T | Always on top, double size (Winamp's Ctrl+D is Limusic's previous track), time remaining |
 | Delete, Enter | Remove / play the selected playlist track |
 | Ctrl+= (or +, numpad +), Ctrl+-, Ctrl+0 | Lyrics text bigger, smaller, back to normal (while they're showing); the same keys Limusic zooms its own window with |
+| Ctrl+Shift+K | MilkDrop window |
 
 A floating panel forwards them to the Winamp window (`winamp-key`), bar Delete/Enter on its own
 playlist.
@@ -143,7 +166,10 @@ playlist (464 px) or the stack if taller, 275 px wide until dragged wider or nar
 right edge (150–1200 px); album art can't take the right side then. Or floating, resizable.
 Ctrl+wheel over them (or the keys above) sizes the text, 75–300%, in every window at once
 (`zoomLyrics` in `skinApi.js`, broadcast as `winamp-lyrics-zoom`). The width and text size are
-remembered.
+remembered. Each line's romanization and translation (Limusic's, from `romanize.rs` and the
+lyrics providers) show under it, smaller, when switched on from the panel's right-click menu.
+Those are Limusic's own two switches (the same localStorage keys as `LyricsView.svelte`): on in
+one place is on in both. Translations start on and romanization off, as in Limusic.
 
 ## Remembered state
 
@@ -175,6 +201,25 @@ through `winamp-panel-dock` / `winamp-panel-toggle` events, and Rust tells it wh
 (`winamp-panel-closed`, Alt+F4 included). No snapping yet, and on Wayland the compositor decides
 where a floating window opens. Search results don't carry over between docked and floating.
 Code: `ui/src/lib/components/AlbumArtWindow.svelte`, `FloatingListPanel.svelte`.
+
+## Name and icon
+
+People see **YTMinamp (limusic)**: tray, window titles, media controls, notifications, the About
+box and the desktop entry (`packaging/linux/ytminamp.desktop`, a Tauri desktop template). One
+constant, `src-tauri/src/brand.rs`, so each upstream file showing a name changes by one
+identifier. Its `ID`, `ytminamp`, is also the tray and MPRIS (media controls) id and the
+`.desktop` name sleep inhibition reports, so YTMinamp and Limusic can run side by side. Package
+and file names stay `ytminamp` (`productName`): a name with spaces and brackets doesn't belong
+there. Limusic's own UI keeps its name; it's still Limusic.
+
+The icon, `packaging/icon/ytminamp.svg`, is YouTube Music's red play disc with Winamp's lightning
+bolt in the play button. `src-tauri/icons/` is generated from it:
+
+```bash
+magick -background none -density 900 rsvg:packaging/icon/ytminamp.svg -resize 1024x1024 /tmp/ytminamp-1024.png
+podman run --rm -v "$PWD":/src:Z -v /tmp:/icon:Z -w /src ytminamp-fedora-build tauri icon /icon/ytminamp-1024.png -o src-tauri/icons
+rm -rf src-tauri/icons/android src-tauri/icons/ios
+```
 
 ## Title, kbps, kHz
 
@@ -262,6 +307,7 @@ error and the app aborts.
 - The Media Library window.
 - Multiple selection in the playlist.
 - Snapping floating windows together.
+- Live audio for the analyzer and MilkDrop on Windows and macOS (they show test patterns there).
 - Search covers songs only (no albums, artists, playlists or typeahead).
 - Fractional desktop scaling (e.g. 125%) blurs the skin evenly: GTK3 renders the window at 1x and
   the compositor scales it. Pixel art can't be both sharp and evenly sized at 1.25x.
@@ -276,12 +322,25 @@ or ignored can leak), mirrors it into a clone of the fork and commits; it never 
 
 ### Releases
 
-Tags are `v<Limusic version>-ytminamp.<n>` (`v1.3.0-ytminamp.2`: built on Limusic 1.3.0, our
-second). Builds are unsigned and there's no updater (its endpoints are emptied in
-`tauri.conf.json`), so a release is just installers:
+Tags are `v<Limusic version>-ytminamp.<N>` (`v1.3.0-ytminamp.3`: built on Limusic 1.3.0, our
+third). The app's own `version` stays Limusic's; `scripts/set-ytminamp-release.py N` puts N
+everywhere else a version shows:
 
-1. Publish and push the `ytminamp` branch, then `gh release create <tag> --target <sha>
-   --prerelease` on the fork.
+| Where | Becomes | Why |
+|---|---|---|
+| RPM Release field | `ytminamp-1.3.0-3` | dnf sees each build as an upgrade |
+| MSI version | `1.3.3` (patch × 1000 + N; Limusic 1.3.1 build 1 would be `1.3.1001`) | Windows Installer compares only major.minor.build, the build at most 65535 |
+| About box | `1.3.0 (ytminamp.3)` | `ui/src/lib/skin/release.js` |
+| Release file names | `ytminamp_1.3.0-ytminamp.3_x64-setup.exe` | renamed by the upload step |
+
+The workflows refuse a tag that doesn't match N in all of those. N starts again from 1 when the
+Limusic version changes. On Windows the setup .exe upgrades in place either way.
+
+Builds are unsigned and there's no updater (its endpoints are emptied in `tauri.conf.json`), so a
+release is just installers:
+
+1. `scripts/set-ytminamp-release.py N`, commit. Publish and push the `ytminamp` branch, then
+   `gh release create <tag> --target <sha> --prerelease` on the fork.
 2. `gh workflow run ytminamp-{linux,windows,macos}.yml --ref ytminamp -f tag=<tag>`: AppImage +
    deb, NSIS + MSI, Apple Silicon DMG, each attached to the release by its own run.
 3. The RPM is built here, `scripts/build-fedora.sh rpm`, and attached with
@@ -315,6 +374,9 @@ ytminamp stands on other people's work:
   (taken from its repository at commit `3664324b`). It is not under an open licence: as Webamp's
   README puts it, the Winamp name and interface are surely property of Nullsoft; it is included
   in the same spirit as Webamp includes it.
+- **[Butterchurn](https://github.com/jberg/butterchurn)** and
+  **[butterchurn-presets](https://github.com/jberg/butterchurn-presets)** by Jordan Berg (MIT):
+  the MilkDrop window. MilkDrop itself is Ryan Geiss's, and the presets are their authors'.
 - **Skin authors.** The test skins in `fixtures/skins` are freely licensed (see its README):
   *Debian 1.0* by Jesper Schultz (Artistic License) and *Antarès 1a* by Jérôme Villette (GPL),
   from the XMMS skin collection.
@@ -350,5 +412,8 @@ SOFTWARE.
 
 vis_classic (WACUP) — https://github.com/WACUP/vis_classic — is also released under the MIT
 licence; see its repository for the copyright line.
+
+Butterchurn and butterchurn-presets — https://github.com/jberg/butterchurn — MIT, "Copyright (c)
+2013-2018 Jordan Berg", with the same terms as above (their LICENSE files ship in the packages).
 
 </details>

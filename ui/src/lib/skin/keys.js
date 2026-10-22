@@ -21,6 +21,7 @@ import {
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
 	togglePanel,
+	toggleMilkdrop,
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
@@ -30,7 +31,7 @@ import { uiState } from './uiState.js';
 
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
- *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset'} KeyAction */
+ *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop'} KeyAction */
 
 /**
  * The action a key press means, or null if it isn't one of ours.
@@ -50,6 +51,8 @@ function actionFor(e) {
 		const zoom = /** @type {Record<string, KeyAction>} */ ({ '=': 'lyricsBigger', '+': 'lyricsBigger', '-': 'lyricsSmaller', 0: 'lyricsReset' })[key];
 		if (zoom) return zoom;
 	}
+	// Winamp's start/stop visualization plugin.
+	if (ctrl && e.shiftKey && !e.altKey && key === 'k') return 'milkdrop';
 	if (ctrl && !e.altKey && !e.shiftKey) {
 		return /** @type {Record<string, KeyAction>} */ ({ l: 'url', a: 'onTop', 2: 'double', t: 'time' })[key] ?? null;
 	}
@@ -106,6 +109,8 @@ export function runKey(action) {
 			// Only with the lyrics showing: a size change you can't see is a confusing one.
 			if (uiState.lyrics.open) zoomLyrics(action === 'lyricsBigger' ? 1 : action === 'lyricsSmaller' ? -1 : 0);
 			return;
+		case 'milkdrop':
+			return toggleMilkdrop();
 		case 'remove':
 			if (uiState.pl.open) removeSelected().catch(log('remove'));
 			return;

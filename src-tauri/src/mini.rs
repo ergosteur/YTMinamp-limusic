@@ -50,7 +50,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
             // match it, and set here because they only read the title the window is created with
             // (#362). Deliberately untranslated: a localised title breaks the rule on a language
             // switch. The app_id can't differ instead, GTK sets that once per process.
-            .title("Limusic Mini Player")
+            .title(format!("{} Mini Player", crate::brand::NAME))
             .inner_size(w, h)
             .resizable(false)
             .decorations(false)

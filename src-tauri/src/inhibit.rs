@@ -17,8 +17,8 @@ use zbus::blocking::Connection;
 use zbus::zvariant::DynamicType;
 use zbus::Message;
 
-/// The installed `limusic.desktop`, which is how the desktop finds a name and icon to show.
-const APP_ID: &str = "limusic";
+/// The installed `.desktop` file's name, which is how the desktop finds a name and icon to show.
+const APP_ID: &str = crate::brand::ID;
 const REASON: &str = "Playing music";
 
 /// On both, the interface is named like the bus name.

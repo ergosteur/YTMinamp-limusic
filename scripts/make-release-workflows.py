@@ -59,12 +59,21 @@ VERSION_CHECK = """      - name: Check the tag matches the app version
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "PRERELEASE=false" >> "$GITHUB_ENV"
-          # ytminamp tags: v<the Limusic version it's built on>-ytminamp.<our build>.
-          if [[ "${{ steps.rel.outputs.tag }}" != "v$VERSION-ytminamp."* ]]; then
+          # ytminamp tags: v<the Limusic version it's built on>-ytminamp.<our build N>, N as set by
+          # scripts/set-ytminamp-release.py (RPM release, MSI version, About box).
+          N="$(jq -r .bundle.linux.rpm.release src-tauri/tauri.conf.json)"
+          echo "YTMINAMP_TAG=v$VERSION-ytminamp.$N" >> "$GITHUB_ENV"
+          IFS=. read -r MA MI PA <<< "$VERSION"
+          MSI="$(jq -r .bundle.windows.wix.version src-tauri/tauri.conf.json)"
+          problem=""
+          [ "${{ steps.rel.outputs.tag }}" = "v$VERSION-ytminamp.$N" ] || problem="the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.$N"
+          [ "$MSI" = "$MA.$MI.$((PA * 1000 + N))" ] || problem="MSI version $MSI doesn't match build $N: run scripts/set-ytminamp-release.py $N"
+          grep -q "YTMINAMP_RELEASE = $N;" ui/src/lib/skin/release.js || problem="ui/src/lib/skin/release.js isn't build $N: run scripts/set-ytminamp-release.py $N"
+          if [ -n "$problem" ]; then
             if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "::warning::dry run: built ref is ${{ steps.rel.outputs.tag }}, app version $VERSION"
+              echo "::warning::dry run: $problem"
             else
-              echo "::error::the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.N"
+              echo "::error::$problem"
               exit 1
             fi
           fi
@@ -85,8 +94,16 @@ def upload_step(files: str) -> str:
           shopt -s nullglob
           FILES=({files})
           [ ${{#FILES[@]}} -gt 0 ] || {{ echo "::error::nothing to attach"; find target/release/bundle -maxdepth 2; exit 1; }}
-          gh release upload "${{{{ steps.rel.outputs.tag }}}}" "${{FILES[@]}}" --repo "$GITHUB_REPOSITORY" --clobber
-          printf 'attached %s\\n' "${{FILES[@]}}"
+          # Named for the whole tag (ytminamp_1.3.0-ytminamp.3_...), so one release's files can't be
+          # mistaken for another's: the bundler only knows the Limusic version.
+          OUT="$RUNNER_TEMP/attach"
+          mkdir -p "$OUT"
+          for f in "${{FILES[@]}}"; do
+            name="$(basename "$f")"
+            cp "$f" "$OUT/${{name/_${{VERSION}}_/_${{YTMINAMP_TAG#v}}_}}"
+          done
+          gh release upload "${{{{ steps.rel.outputs.tag }}}}" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
+          ls "$OUT"
 """
 
 

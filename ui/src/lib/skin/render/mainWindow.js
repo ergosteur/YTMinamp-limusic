@@ -30,6 +30,7 @@ import {
 import { drawTimeDigits } from "./numbers.js";
 import { drawText, drawTitle } from "./marquee.js";
 import { drawAnalyzer } from "./visualizer.js";
+import { analyzerColumns } from "../testPattern.js";
 
 /** @typedef {import("../ipc.js").RegionPayload} RegionPayload */
 
@@ -109,7 +110,7 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
   if (titlebar) ctx.drawImage(titlebar, 27, 0, MAIN_W, 14, 0, 0, MAIN_W, 14);
 
   if (uiState.visMode === "analyzer") {
-    drawAnalyzer(ctx, uiState.viscolor, uiState.vizColumns);
+    drawAnalyzer(ctx, uiState.viscolor, analyzerColumns(performance.now()));
   }
 
   drawButtons(ctx, sprites, uiState);

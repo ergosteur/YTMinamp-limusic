@@ -33,6 +33,8 @@ podman run --rm \
   -w /src \
   "$image" bash -euo pipefail -c '
     (cd ui && pnpm install --frozen-lockfile && pnpm build)
+    # The target volume outlives builds: so clear out RPMs from earlier builds before making this one.
+    rm -rf /target/release/bundle/rpm
     # The UI is already built: skip tauri.conf.json'"'"'s `pnpm build` hook. No updater
     # artifacts: the fork has no updater (tauri.conf.json), and they need a signing key.
     tauri build '"${bundle[*]}"' --config "{\"build\":{\"beforeBuildCommand\":\"\"},\"bundle\":{\"createUpdaterArtifacts\":false}}"

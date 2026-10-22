@@ -11,7 +11,8 @@
     "winamp-search",
     "winamp-eq",
     "winamp-lyrics",
-    "winamp-url"
+    "winamp-url",
+    "winamp-milkdrop"
   ],
   "permissions": [
     "core:default",

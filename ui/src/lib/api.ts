@@ -552,6 +552,8 @@ export const openWinamp = () => invoke<void>('open_winamp');
 /** Close the Winamp window and bring the app back. */
 export const closeWinamp = () => invoke<void>('close_winamp');
 /** The skin UI resizing its own window (no native resize handles — `resizable: false`). */
+/** Whether a `width`x`height` Winamp window fits its screen. */
+export const winampFits = (width: number, height: number) => invoke<boolean>('winamp_fits', { width, height });
 export const resizeWinamp = (width: number, height: number) =>
 	invoke<void>('resize_winamp', { width, height });
 /** The remembered skin, parsed into sprite sheets (PNG data URLs) + window shape/colors for the
@@ -580,7 +582,7 @@ export interface WinampMenuEntry {
 export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number) =>
 	invoke<void>('winamp_popup_menu', { items, x, y });
 /** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
-export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url';
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop';
 /** Float a panel in its own window, or bring that window back if it's up. */
 export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
 	invoke<void>('open_winamp_panel', { kind, width, height });

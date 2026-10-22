@@ -2,6 +2,7 @@
 // LYRICS), in the playlist editor's font and colours. Timed lyrics keep the sung line centred
 // and lit; the wheel scrolls by hand until the next track.
 import { drawFrame, artFrame, frameInset } from './albumArt.js';
+import { lyricsShow } from '../lyrics.js';
 
 /** At zoom 1: the playlist editor's text size. */
 const LINE_H = 15;
@@ -9,32 +10,44 @@ const FONT_PX = 11;
 
 /** @typedef {import('$lib/api').SkinPayload['pledit']} PleditColours */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
+/** A wrapped row; `sub` for a line's romanization or translation, drawn smaller and dimmer.
+ * @typedef {{ text: string, line: number, sub: boolean }} Row */
 
 /** Wrapped lines, cached per lyrics and width: measuring every frame would be wasteful. */
-let wrapped = { key: '', lyricsKey: '', rows: /** @type {{ text: string, line: number }[]} */ ([]) };
+let wrapped = { key: '', lyricsKey: '', rows: /** @type {Row[]} */ ([]) };
 /** The view's scroll, in rows, easing towards where it should be. */
 let shown = 0;
 
 /**
- * Break each lyric line into rows that fit `width`, remembering which line each row came from.
+ * Break each lyric line, and its romanization and translation when shown, into rows that fit
+ * `width`, remembering which line each row came from.
  * @param {CanvasRenderingContext2D} ctx @param {import('$lib/api').LyricLine[]} lines @param {number} width
+ * @param {{ main: string, sub: string }} fonts
  */
-function wrap(ctx, lines, width) {
-	/** @type {{ text: string, line: number }[]} */
+function wrap(ctx, lines, width, fonts) {
+	/** @type {Row[]} */
 	const rows = [];
-	lines.forEach((l, line) => {
-		const words = l.text.split(/\s+/).filter(Boolean);
-		if (!words.length) return rows.push({ text: '', line });
+	/** @param {string} text @param {number} line @param {boolean} sub */
+	const add = (text, line, sub) => {
+		ctx.font = sub ? fonts.sub : fonts.main;
+		const words = text.split(/\s+/).filter(Boolean);
+		if (!words.length) return rows.push({ text: '', line, sub });
 		let row = '';
 		for (const word of words) {
 			const next = row ? `${row} ${word}` : word;
 			if (row && ctx.measureText(next).width > width) {
-				rows.push({ text: row, line });
+				rows.push({ text: row, line, sub });
 				row = word;
 			} else row = next;
 		}
-		rows.push({ text: row, line });
+		rows.push({ text: row, line, sub });
+	};
+	lines.forEach((l, line) => {
+		add(l.text, line, false);
+		if (lyricsShow.romanized && l.romanized) add(l.romanized, line, true);
+		if (lyricsShow.translated && l.translation) add(l.translation, line, true);
 	});
+	ctx.font = fonts.main;
 	return rows;
 }
 
@@ -59,7 +72,9 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 	ctx.beginPath();
 	ctx.rect(inner.x, inner.y, inner.w, inner.h);
 	ctx.clip();
-	ctx.font = `${Math.round(FONT_PX * zoom)}px ${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`;
+	const family = `${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`;
+	const fonts = { main: `${Math.round(FONT_PX * zoom)}px ${family}`, sub: `${Math.round(FONT_PX * zoom * 0.85)}px ${family}` };
+	ctx.font = fonts.main;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	const cx = inner.x + inner.w / 2;
@@ -77,11 +92,11 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 	} else {
 		const lyrics = state.lyrics;
 		const lyricsKey = `${lyrics.provider}|${lyrics.lines.length}|${lyrics.lines[0]?.text}`;
-		const key = `${lyricsKey}|${inner.w}|${ctx.font}`;
+		const key = `${lyricsKey}|${inner.w}|${ctx.font}|${lyricsShow.romanized}|${lyricsShow.translated}`;
 		if (wrapped.key !== key) {
 			// New lyrics start from the top; the same ones rewrapped (resized, zoomed) ease over.
 			if (wrapped.lyricsKey !== lyricsKey) shown = 0;
-			wrapped = { key, lyricsKey, rows: wrap(ctx, lyrics.lines, inner.w - 8) };
+			wrapped = { key, lyricsKey, rows: wrap(ctx, lyrics.lines, inner.w - 8, fonts) };
 		}
 		const rows = wrapped.rows;
 		const visible = inner.h / lineH;
@@ -95,6 +110,8 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		for (let r = first; r < Math.min(rows.length, first + visible + 2); r++) {
 			const y = inner.y + (r - shown) * lineH + lineH / 2;
 			ctx.fillStyle = (rows[r].line === sung ? pledit.current : pledit.normal) ?? '#00ff00';
+			ctx.font = rows[r].sub ? fonts.sub : fonts.main;
+			ctx.globalAlpha = rows[r].sub ? 0.75 : 1;
 			ctx.fillText(rows[r].text, cx, y);
 		}
 	}

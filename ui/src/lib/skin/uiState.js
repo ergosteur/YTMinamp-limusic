@@ -31,6 +31,10 @@ export const uiState = {
 	visMode: /** @type {"analyzer" | "off"} */ ('analyzer'),
 	/** Latest 75 analyzer columns from Rust's `winamp-viz` event (viz.rs). */
 	vizColumns: /** @type {number[] | null} */ (null),
+	/** When they came (`performance.now()`): stale columns mean no live feed (testPattern.js). */
+	vizAt: 0,
+	/** The MilkDrop window (Butterchurn) is open. */
+	milkdrop: false,
 	/** Shown in place of the title until `marqueeMessageUntil` (performance.now() ms). */
 	marqueeMessage: '',
 	marqueeMessageUntil: 0,

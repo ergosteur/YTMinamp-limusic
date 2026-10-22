@@ -3,7 +3,7 @@
 //! mpv plays in-process and libmpv offers no PCM tap, so this records the default output's
 //! monitor source through the PulseAudio API (PipeWire's pulse server on modern Linux) and runs
 //! Winamp's own FFT on it. Consequence: the bars show everything playing on that output, not just
-//! this app. Linux-only; elsewhere the analyzer stays empty. Runs only while the Winamp window is
+//! this app. Linux-only; elsewhere the analyzer plays test patterns (`ui/src/lib/skin/testPattern.js`). Runs only while the Winamp window is
 //! open ([`start`] from `winamp::open`, [`stop`] from `winamp::close`).
 //!
 //! The FFT and the 75-column frequency mapping are a port of Webamp's (`FFTNullsoft.ts`, itself
@@ -16,6 +16,10 @@ use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 
 pub const EVENT: &str = "winamp-viz";
+/// The raw waveform, for the MilkDrop window (Butterchurn): 1024 bytes, silence at 128, as
+/// WebAudio's `getByteTimeDomainData` gives them.
+pub const WAVE_EVENT: &str = "winamp-wave";
+const MILKDROP: &str = "winamp-milkdrop";
 
 const RATE: u32 = 44_100;
 /// Samples per read: one ~60 Hz frame's worth.
@@ -55,7 +59,7 @@ fn capture(app: &AppHandle, stop: &AtomicBool) -> Result<(), String> {
     use libpulse_binding::sample::{Format, Spec};
     use libpulse_binding::stream::Direction;
     use libpulse_simple_binding::Simple;
-    use tauri::Emitter;
+    use tauri::{Emitter, Manager};
 
     let spec = Spec { format: Format::F32le, channels: 1, rate: RATE };
     // Small fragments so a read returns about one frame's worth instead of a big buffer.
@@ -88,6 +92,10 @@ fn capture(app: &AppHandle, stop: &AtomicBool) -> Result<(), String> {
             *dst = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
         }
         let _ = app.emit_to(crate::winamp::LABEL, EVENT, fft.columns(&window));
+        if app.get_webview_window(MILKDROP).is_some() {
+            let wave: Vec<u8> = window.iter().map(|s| (s.clamp(-1.0, 1.0) * 127.0 + 128.0) as u8).collect();
+            let _ = app.emit_to(MILKDROP, WAVE_EVENT, wave);
+        }
     }
     Ok(())
 }

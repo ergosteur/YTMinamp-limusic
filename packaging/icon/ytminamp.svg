@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- YTMinamp: YouTube Music's red play disc, with Winamp's lightning bolt in the play button. -->
+  <defs>
+    <radialGradient id="red" cx="40%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ff4545"/>
+      <stop offset="0.6" stop-color="#ec0d1d"/>
+      <stop offset="1" stop-color="#b0000f"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#fff38a"/>
+      <stop offset="0.5" stop-color="#ffc41f"/>
+      <stop offset="1" stop-color="#ff7a00"/>
+    </linearGradient>
+  </defs>
+  <circle cx="512" cy="512" r="480" fill="url(#red)"/>
+  <path d="M345 235 L345 789 L825 512 Z" fill="#fff" stroke="#fff" stroke-width="70" stroke-linejoin="round"/>
+  <g transform="translate(512 517) scale(1.28) translate(-512 -517)">
+    <path d="M545 300 L405 545 L500 545 L440 735 L620 470 L525 470 L590 300 Z" fill="url(#gold)" stroke="#3a1a00" stroke-width="18" stroke-linejoin="round"/>
+  </g>
+</svg>

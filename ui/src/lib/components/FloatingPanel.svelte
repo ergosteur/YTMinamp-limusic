@@ -23,7 +23,7 @@
 	import { attachInput } from '../skin/input.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { LYRICS_ZOOM_EVENT, SEARCH_INPUT_ID, flashSearch, followQueue, loadSkin, playIndex, searchKeydown } from '../skin/skinApi.js';
-	import { showPlaylistMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
+	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
 	import { drawLyrics } from '../skin/render/lyrics.js';
 	import { artFrame } from '../skin/render/albumArt.js';
@@ -97,7 +97,9 @@
 						? showResultMenu(target.index, at)
 						: target.kind === 'presets'
 							? showPresetsMenu(at)
-							: showPlaylistMenu(target.kind, at);
+							: target.kind === 'lyrics'
+								? showLyricsMenu(at)
+								: showPlaylistMenu(target.kind, at);
 				shown.catch((e) => console.error('menu failed', e));
 			},
 			closePanel: () => dockTo(null),

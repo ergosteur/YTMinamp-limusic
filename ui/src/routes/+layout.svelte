@@ -48,6 +48,7 @@
 	import AlbumArtWindow from '$lib/components/AlbumArtWindow.svelte';
 	import FloatingPanel from '$lib/components/FloatingPanel.svelte';
 	import OpenUrlWindow from '$lib/components/OpenUrlWindow.svelte';
+	import MilkdropWindow from '$lib/components/MilkdropWindow.svelte';
 	import NowPlaying from '$lib/components/NowPlaying.svelte';
 	import TheaterMode from '$lib/components/TheaterMode.svelte';
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
@@ -207,6 +208,7 @@
 	// Winamp panels floating in windows of their own: album art, the playlist editor, search.
 	const isWinampArt = browser && getCurrentWindow().label === 'winamp-art';
 	const isWinampUrl = browser && getCurrentWindow().label === 'winamp-url';
+	const isWinampMilkdrop = browser && getCurrentWindow().label === 'winamp-milkdrop';
 	const winampPanels: Record<string, 'playlist' | 'search' | 'eq' | 'lyrics'> = {
 		'winamp-playlist': 'playlist',
 		'winamp-search': 'search',
@@ -225,7 +227,7 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl) {
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop) {
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
@@ -280,6 +282,8 @@
 	<FloatingPanel kind={winampList} />
 {:else if isWinampUrl}
 	<OpenUrlWindow />
+{:else if isWinampMilkdrop}
+	<MilkdropWindow />
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
 	     rounds the corners (the compositor can't round an undecorated window for us on Linux).

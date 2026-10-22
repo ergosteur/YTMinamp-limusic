@@ -37,7 +37,7 @@
 		setPanelOpen,
 		togglePanel
 	} from '../skin/skinApi.js';
-	import { showMainMenu, showPlaylistMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
+	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
 	import { refreshLibrary } from '../skin/playlistActions.js';
 
@@ -146,7 +146,9 @@
 						? showResultMenu(target.index, at)
 						: target.kind === 'presets'
 							? showPresetsMenu(at)
-							: showPlaylistMenu(target.kind, at);
+							: target.kind === 'lyrics'
+								? showLyricsMenu(at)
+								: showPlaylistMenu(target.kind, at);
 				shown.catch((e) => console.error('menu failed', e));
 			},
 			closePanel: (kind) => (kind === 'art' ? setArt(false) : setPanelOpen(kind, false)),
@@ -199,14 +201,17 @@
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
 		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url'} */ (e.payload);
-			if (kind === 'url') return; // the Open URL dialog: nothing here tracks it
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop'} */ (e.payload);
+			// The Open URL dialog: nothing here tracks it.
+			if (kind === 'url') return;
+			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
 			if (view.dock === 'float') view.open = false;
 		});
 
 		const unlistenViz = listen('winamp-viz', (e) => {
 			uiState.vizColumns = /** @type {number[]} */ (e.payload);
+			uiState.vizAt = performance.now();
 		});
 
 		stopLoop = startRenderLoop((nowMs) => {

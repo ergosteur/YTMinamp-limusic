@@ -249,9 +249,19 @@ export function toggleAlwaysOnTop() {
 
 /** The clutterbar's D: Winamp's double size, for the whole Winamp window. */
 export async function toggleDoubleSize() {
+	if (!uiState.doubleSize && !(await doubleFits())) {
+		flashMarquee("Double size won't fit on this screen");
+		return;
+	}
 	uiState.doubleSize = !uiState.doubleSize;
 	savePref('doubleSize', uiState.doubleSize);
 	await applyDoubleSize();
+}
+
+/** Whether everything that's open fits the screen at double size. */
+async function doubleFits() {
+	const { width, height } = dockedLayout();
+	return api.winampFits(width * 2, height * 2).catch(() => true);
 }
 
 /** Zoom the page and size the window to match `uiState.doubleSize`. */
@@ -301,7 +311,9 @@ export async function restorePrefs() {
 	Object.assign(uiState.eq, pref('eq', {}));
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
 	uiState.lyrics.width = pref('lyricsWidth', LYRICS_W);
-	uiState.doubleSize = pref('doubleSize', false);
+	// Remembered from a bigger screen, perhaps: only if it fits this one (not saved, so it's back
+	// on the bigger screen).
+	uiState.doubleSize = pref('doubleSize', false) && (await doubleFits());
 	if (uiState.doubleSize) await applyDoubleSize();
 	/** @typedef {{ open: boolean, dock: any } | null} Placement */
 	for (const kind of /** @type {const} */ (['eq', 'search', 'playlist', 'lyrics'])) {
@@ -372,6 +384,21 @@ export function requestSearch() {
 	if (label === 'winamp') openSearch();
 	else if (label === 'winamp-search') flashSearch();
 	else emitTo('winamp', 'winamp-search-add').catch(() => {});
+}
+
+/** Open or close the MilkDrop window (MilkdropWindow.svelte), at the size it last had. */
+export function toggleMilkdrop() {
+	if (uiState.milkdrop) {
+		uiState.milkdrop = false;
+		api.closeWinampPanel('milkdrop').catch(log('close milkdrop'));
+		return;
+	}
+	uiState.milkdrop = true;
+	const { w, h } = pref('milkdropSize', { w: 400, h: 300 });
+	api.openWinampPanel('milkdrop', w, h).catch((e) => {
+		uiState.milkdrop = false;
+		log('open milkdrop')(e);
+	});
 }
 
 /** ADD → Open YouTube URL: the small dialog window (OpenUrlWindow.svelte). */

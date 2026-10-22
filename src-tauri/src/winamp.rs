@@ -20,7 +20,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 6] = ["art", "playlist", "search", "eq", "lyrics", "url"];
+pub const PANELS: [&str; 7] = ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop"];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
 
@@ -51,7 +51,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
     } else {
         let (w, h) = DEFAULT;
         let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
-            .title("Limusic — Winamp")
+            .title(format!("{} — Winamp", crate::brand::NAME))
             .inner_size(w, h)
             .resizable(false)
             .decorations(false)
@@ -105,6 +105,52 @@ pub fn close(app: &AppHandle) {
 pub fn resize(app: &AppHandle, width: f64, height: f64) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.set_size(tauri::LogicalSize::new(width, height));
+        keep_on_screen(&w, width, height);
+    }
+}
+
+/// Whether a `width`x`height` Winamp window fits its screen's work area (double size asks before
+/// growing). True when the platform can't say.
+pub fn fits(app: &AppHandle, width: f64, height: f64) -> bool {
+    app.get_webview_window(LABEL)
+        .and_then(|w| work_area(&w))
+        .map_or(true, |(_, size)| width <= size.width && height <= size.height)
+}
+
+/// The window's monitor's work area (the screen minus panels and docks), in logical px.
+fn work_area(w: &tauri::WebviewWindow) -> Option<(tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>)> {
+    let monitor = w.current_monitor().ok()??;
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    Some((area.position.to_logical(scale), area.size.to_logical(scale)))
+}
+
+/// Native Wayland gives a window no way to read or set its own position, so there's nothing to
+/// correct there (GDK's choice of backend, as in lib.rs).
+fn positions_known() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    match std::env::var("GDK_BACKEND") {
+        Ok(b) => b.split(',').next() == Some("x11"),
+        Err(_) => std::env::var_os("WAYLAND_DISPLAY").is_none(),
+    }
+}
+
+/// Grown past the screen's edge (double size, a panel docking below): move back inside it.
+fn keep_on_screen(w: &tauri::WebviewWindow, width: f64, height: f64) {
+    if !positions_known() {
+        return;
+    }
+    let (Some((origin, size)), Ok(pos), Ok(scale)) = (work_area(w), w.outer_position(), w.scale_factor()) else {
+        return;
+    };
+    let pos = pos.to_logical::<f64>(scale);
+    // Left and top win when it's bigger than the screen: the titlebar stays reachable.
+    let x = pos.x.min(origin.x + size.width - width).max(origin.x);
+    let y = pos.y.min(origin.y + size.height - height).max(origin.y);
+    if (x, y) != (pos.x, pos.y) {
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
     }
 }
 
@@ -126,6 +172,7 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "url" => "Open URL",
         "eq" => "Equalizer",
         "lyrics" => "Lyrics",
+        "milkdrop" => "MilkDrop",
         _ => "Search",
     };
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))

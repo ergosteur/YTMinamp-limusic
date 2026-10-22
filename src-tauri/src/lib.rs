@@ -3,6 +3,7 @@
 mod appicon;
 mod audioproxy;
 mod blocked;
+mod brand;
 mod cipher;
 mod commands;
 mod db;
@@ -1040,6 +1041,7 @@ pub fn run() {
             commands::open_winamp,
             commands::close_winamp,
             commands::resize_winamp,
+            commands::winamp_fits,
             commands::load_wsz_skin,
             commands::select_wsz_skin,
             commands::list_wsz_skins,
