@@ -194,6 +194,17 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
     });
     #[cfg(target_os = "linux")]
     crate::tune_webview_labelled(app, &label, false);
+    // tune_webview turns WebGL off everywhere; MilkDrop (Butterchurn) is WebGL, so it comes back
+    // on in that window alone.
+    #[cfg(target_os = "linux")]
+    if panel == "milkdrop" {
+        let _ = win.with_webview(|wv| {
+            use webkit2gtk::{SettingsExt, WebViewExt};
+            if let Some(settings) = WebViewExt::settings(&wv.inner()) {
+                settings.set_enable_webgl(true);
+            }
+        });
+    }
     // Alt+F4 or the frame's ✕ alike: the Winamp window puts its state right.
     let (handle, name) = (app.clone(), panel.to_owned());
     win.on_window_event(move |event| {

@@ -5,6 +5,7 @@
 
 import { drawText } from './marquee.js';
 import { isLit } from '../focus.js';
+import { drawGenText, genTextWidth } from './albumArt.js';
 
 /** Docked size: Winamp's default. */
 export const PL_W = 275;
@@ -20,6 +21,12 @@ const TILE_H = 29;
 /** Rows fit the list's 11px text (Winamp's own was 9px, too small on today's screens). */
 export const ROW_H = 15;
 const LIST_PAD = 3;
+
+/** In pledit.bmp's title piece: the stripes' end caps at each side, and a plain column of
+ * background (the baked-in title sits on it) to stretch under the search panel's own title. */
+const TITLE_CAP = 4;
+const TITLE_PLAIN_X = 5;
+const TITLE_PAD = 3;
 
 export const PLEDIT = {
 	topTile: { x: 127, y: 21, w: 25, h: 20 },
@@ -192,10 +199,24 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 	blit(ctx, sheet, top(PLEDIT.topLeft), 0, oy);
 	if (kind === 'playlist') {
 		blit(ctx, sheet, top(PLEDIT.title), Math.floor((w - PLEDIT.title.w) / 2), oy);
-	} else if (text) {
-		// pledit.bmp's title is baked-in "WINAMP PLAYLIST"; the search panel spells its own.
+	} else {
+		// pledit.bmp's title is baked-in "WINAMP PLAYLIST"; the search panel spells its own, in
+		// gen.bmp's titlebar letters (text.bmp's when the skin has none) on the title piece's
+		// plain middle, between its end caps.
 		const label = 'search';
-		drawText(ctx, text, label, Math.floor((w - label.length * 5) / 2), oy + 7);
+		const gen = sprites.get('gen');
+		const textW = gen ? genTextWidth(gen, label) : 0;
+		if (gen && textW) {
+			const t = top(PLEDIT.title);
+			const tx = Math.floor((w - textW) / 2);
+			const pad = TITLE_PAD;
+			ctx.drawImage(sheet, t.x + TITLE_PLAIN_X, t.y, 1, t.h, tx - pad, oy, textW + 2 * pad, t.h);
+			ctx.drawImage(sheet, t.x, t.y, TITLE_CAP, t.h, tx - pad - TITLE_CAP, oy, TITLE_CAP, t.h);
+			ctx.drawImage(sheet, t.x + t.w - TITLE_CAP, t.y, TITLE_CAP, t.h, tx + textW + pad, oy, TITLE_CAP, t.h);
+			drawGenText(ctx, gen, label, tx, oy, isLit(kind));
+		} else if (text) {
+			drawText(ctx, text, label, Math.floor((w - label.length * 5) / 2), oy + 7);
+		}
 	}
 	blit(ctx, sheet, top(PLEDIT.topRight), w - PLEDIT.topRight.w, oy);
 	for (let y = TOP_H; y < h - BOTTOM_H; y += TILE_H) {

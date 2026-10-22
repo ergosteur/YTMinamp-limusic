@@ -199,6 +199,33 @@ function drawLabel(ctx, text, label, { x, y, w }, dy) {
 }
 
 /**
+ * How wide `text` is in gen.bmp's letters; 0 if the skin has none.
+ * @param {ImageBitmap} sheet gen.bmp @param {string} text
+ */
+export function genTextWidth(sheet, text) {
+	const letters = lettersOf(sheet)?.focused;
+	if (!letters) return 0;
+	return [...text.toUpperCase()].reduce((sum, c) => sum + (letters[c]?.w ?? GEN_TEXT.space), 0);
+}
+
+/**
+ * `text` in gen.bmp's titlebar letters, lit or dim, at a titlebar's top-left (x, y): the letters
+ * sit GEN_TEXT.dy down, on its stripe. A-Z only; anything else is a space.
+ * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} sheet gen.bmp @param {string} text
+ * @param {number} x @param {number} y @param {boolean} lit
+ */
+export function drawGenText(ctx, sheet, text, x, y, lit) {
+	const state = lit ? 'focused' : 'unfocused';
+	const letters = lettersOf(sheet)?.[state];
+	if (!letters) return;
+	for (const c of text.toUpperCase()) {
+		const l = letters[c];
+		if (l) ctx.drawImage(sheet, l.x, GEN_TEXT[state], l.w, GEN_TEXT.h, x, y + GEN_TEXT.dy, l.w, GEN_TEXT.h);
+		x += l?.w ?? GEN_TEXT.space;
+	}
+}
+
+/**
  * gen.bmp: corners at their own size, edges tiled, and the title (in its own letters) centred on
  * the titlebar between its end caps.
  * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} sheet @param {Rect} at @param {boolean} closePressed
@@ -210,21 +237,14 @@ function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed, title, lit) {
 	const state = lit ? 'focused' : 'unfocused';
 	const piece = (/** @type {number} */ px) => ({ x: px, y: TOP_Y[state], w: GEN_TOP.w, h: GEN_TOP.h });
 	for (let tx = x; tx < x + w; tx += GEN_TOP.w) blit(ctx, sheet, piece(GEN_TOP.fill), tx, y);
-	const letters = lettersOf(sheet)?.[state];
-	const chars = [...title.toUpperCase()];
-	const textW = letters ? chars.reduce((sum, c) => sum + (letters[c]?.w ?? GEN_TEXT.space), 0) : 0;
+	const textW = genTextWidth(sheet, title);
 	// Only with room for both corners and both end caps.
-	if (letters && textW && textW + 4 * GEN_TOP.w <= w) {
+	if (textW && textW + 4 * GEN_TOP.w <= w) {
 		const tx = x + Math.floor((w - textW) / 2);
 		for (let cx = tx; cx < tx + textW; cx += GEN_TOP.w) blit(ctx, sheet, piece(GEN_TOP.centerFill), cx, y, Math.min(GEN_TOP.w, tx + textW - cx));
 		blit(ctx, sheet, piece(GEN_TOP.leftEnd), tx - GEN_TOP.w, y);
 		blit(ctx, sheet, piece(GEN_TOP.rightEnd), tx + textW, y);
-		let cx = tx;
-		for (const c of chars) {
-			const l = letters[c];
-			if (l) ctx.drawImage(sheet, l.x, GEN_TEXT[state], l.w, GEN_TEXT.h, cx, y + GEN_TEXT.dy, l.w, GEN_TEXT.h);
-			cx += l?.w ?? GEN_TEXT.space;
-		}
+		drawGenText(ctx, sheet, title, tx, y, lit);
 	}
 	blit(ctx, sheet, piece(GEN_TOP.left), x, y);
 	blit(ctx, sheet, piece(GEN_TOP.right), x + w - GEN_TOP.w, y);
