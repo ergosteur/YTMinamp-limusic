@@ -2,10 +2,11 @@
 // window uses the generic window frame (gen.bmp); most older skins don't have one, so those get
 // a frame cut from the equalizer window instead (eqmain.bmp — no EQ window here to use it), its
 // title covered by an "ALBUM ART" label. Sprite coordinates: Webamp's skinSprites.ts (GEN,
-// EQ_WINDOW) and gen-window.css / equalizer-window.css. Title rows are the unfocused ones, like
-// the playlist editor's.
+// EQ_WINDOW) and gen-window.css / equalizer-window.css. Titles are in gen.bmp's own letters,
+// lit while the window has focus and dim when it doesn't, as in Winamp.
 
 import { drawText } from './marquee.js';
+import { isLit } from '../focus.js';
 
 /** @typedef {'gen' | 'eq'} ArtFrame */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
@@ -16,10 +17,13 @@ const INSET = {
 	eq: { top: 14, bottom: 4, left: 4, right: 4 }
 };
 
+/** gen.bmp's titlebar pieces: x only, the row is TOP_Y's. */
+const GEN_TOP = { left: 0, leftEnd: 26, centerFill: 52, rightEnd: 78, fill: 104, right: 130, w: 25, h: 20 };
+/** Titlebar rows, and the A-Z letter rows below them, focused and not. */
+const TOP_Y = { focused: 0, unfocused: 21 };
+const GEN_TEXT = { focused: 88, unfocused: 96, h: 7, dy: 4, space: 5 };
+
 const GEN = {
-	topLeft: { x: 0, y: 21, w: 25, h: 20 },
-	topFill: { x: 104, y: 21, w: 25, h: 20 },
-	topRight: { x: 130, y: 21, w: 25, h: 20 },
 	bottomLeft: { x: 0, y: 42, w: 125, h: 14 },
 	bottomRight: { x: 0, y: 57, w: 125, h: 14 },
 	bottomFill: { x: 127, y: 72, w: 25, h: 14 },
@@ -33,6 +37,7 @@ const GEN = {
 const EQ = {
 	background: { x: 0, y: 0, w: 275, h: 116 },
 	titleBar: { x: 0, y: 149, w: 275, h: 14 },
+	titleBarFocused: { x: 0, y: 134, w: 275, h: 14 },
 	closeSelected: { x: 0, y: 125, w: 9, h: 9 }
 };
 /** How much of each end of the EQ titlebar is kept as-is. */
@@ -40,6 +45,55 @@ const EQ_TITLE_END = 25;
 /** A plain stretch of the EQ titlebar, just inside its left end, tiled across the middle in
  *  place of the "EQUALIZER" title. */
 const EQ_TITLE_FILL = { x: 25, y: 149, w: 15, h: 14 };
+
+/** @typedef {Record<string, { x: number, w: number }>} GenLetters */
+/** gen.bmp's letters per sheet, measured once; null where a skin has none to measure. */
+const genLetters = /** @type {WeakMap<ImageBitmap, { focused: GenLetters, unfocused: GenLetters } | null>} */ (new WeakMap());
+
+/**
+ * gen.bmp's A-Z: each row starts at x 1, every letter its own width, separated by 1px columns of
+ * the colour at x 0. Measured from the skin, as Webamp does.
+ * @param {ImageBitmap} sheet
+ */
+function lettersOf(sheet) {
+	if (genLetters.has(sheet)) return genLetters.get(sheet) ?? null;
+	let result = null;
+	try {
+		const canvas = document.createElement('canvas');
+		canvas.width = sheet.width;
+		canvas.height = sheet.height;
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (ctx && sheet.height >= GEN_TEXT.unfocused + GEN_TEXT.h) {
+			ctx.drawImage(sheet, 0, 0);
+			/** @param {number} y */
+			const row = (y) => {
+				const px = ctx.getImageData(0, y, sheet.width, 1).data;
+				const same = (/** @type {number} */ x) =>
+					px[x * 4] === px[0] && px[x * 4 + 1] === px[1] && px[x * 4 + 2] === px[2];
+				/** @type {GenLetters} */
+				const letters = {};
+				let n = 0;
+				for (let x = 1; x < sheet.width && n < 26; ) {
+					if (same(x)) {
+						x++;
+						continue;
+					}
+					const start = x;
+					while (x < sheet.width && !same(x)) x++;
+					letters[String.fromCharCode(65 + n++)] = { x: start, w: x - start };
+				}
+				return n === 26 ? letters : null;
+			};
+			const lit = row(GEN_TEXT.focused);
+			const dim = row(GEN_TEXT.unfocused);
+			if (lit && dim) result = { focused: lit, unfocused: dim };
+		}
+	} catch (e) {
+		console.error('measuring gen.bmp letters failed', e);
+	}
+	genLetters.set(sheet, result);
+	return result;
+}
 
 /** The close button, relative to the frame's top-right corner (same spot on both frames). */
 export const ART_CLOSE = { dx: -2 - 9, y: 3, w: 9, h: 9 };
@@ -106,29 +160,31 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed) {
 		ctx.drawImage(image, sx, sy, side, side, inner.x, inner.y, inner.w, inner.h);
 	}
 
-	drawFrame(ctx, sprites, at, closePressed, w >= 90 ? 'album art' : 'art', frame === 'gen');
+	drawFrame(ctx, sprites, at, closePressed, w >= 90 ? 'album art' : 'art', isLit('art'));
 	ctx.restore();
 }
 
 /**
  * Just the frame — gen.bmp's, or the one cut from eqmain.bmp — with `label` on its titlebar.
- * The album art window's, and the Open URL dialog's.
+ * Album art's, lyrics', MilkDrop's, the Open URL dialog's.
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
  * @param {Rect} at
  * @param {boolean} closePressed
  * @param {string} label
- * @param {boolean} [bareGen] leave gen.bmp's titlebar unlabelled (album art's way)
+ * @param {boolean} lit the active window's titlebar (focus.js), else the dimmed one
  */
-export function drawFrame(ctx, sprites, at, closePressed, label, bareGen = false) {
+export function drawFrame(ctx, sprites, at, closePressed, label, lit) {
 	const gen = sprites.get('gen');
 	const eq = sprites.get('eqmain');
 	const text = sprites.get('text');
 	if (artFrame(sprites) === 'gen' && gen) {
-		drawGenFrame(ctx, gen, at, closePressed);
-		if (!bareGen && text) drawLabel(ctx, text, label, at, 7);
+		const letters = lettersOf(gen);
+		drawGenFrame(ctx, gen, at, closePressed, letters ? label : '', lit);
+		// A gen.bmp without its letters: the title in text.bmp instead.
+		if (!letters && text) drawLabel(ctx, text, label, at, 7);
 	} else if (eq) {
-		drawEqFrame(ctx, eq, at, closePressed);
+		drawEqFrame(ctx, eq, at, closePressed, lit);
 		if (text) drawLabel(ctx, text, label, at, 4);
 	}
 }
@@ -143,14 +199,35 @@ function drawLabel(ctx, text, label, { x, y, w }, dy) {
 }
 
 /**
- * gen.bmp: corners at their own size, edges tiled.
+ * gen.bmp: corners at their own size, edges tiled, and the title (in its own letters) centred on
+ * the titlebar between its end caps.
  * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} sheet @param {Rect} at @param {boolean} closePressed
+ * @param {string} title '' for none
+ * @param {boolean} lit
  */
-function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed) {
+function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed, title, lit) {
 	const i = INSET.gen;
-	for (let tx = x; tx < x + w; tx += GEN.topFill.w) blit(ctx, sheet, GEN.topFill, tx, y);
-	blit(ctx, sheet, GEN.topLeft, x, y);
-	blit(ctx, sheet, GEN.topRight, x + w - GEN.topRight.w, y);
+	const state = lit ? 'focused' : 'unfocused';
+	const piece = (/** @type {number} */ px) => ({ x: px, y: TOP_Y[state], w: GEN_TOP.w, h: GEN_TOP.h });
+	for (let tx = x; tx < x + w; tx += GEN_TOP.w) blit(ctx, sheet, piece(GEN_TOP.fill), tx, y);
+	const letters = lettersOf(sheet)?.[state];
+	const chars = [...title.toUpperCase()];
+	const textW = letters ? chars.reduce((sum, c) => sum + (letters[c]?.w ?? GEN_TEXT.space), 0) : 0;
+	// Only with room for both corners and both end caps.
+	if (letters && textW && textW + 4 * GEN_TOP.w <= w) {
+		const tx = x + Math.floor((w - textW) / 2);
+		for (let cx = tx; cx < tx + textW; cx += GEN_TOP.w) blit(ctx, sheet, piece(GEN_TOP.centerFill), cx, y, Math.min(GEN_TOP.w, tx + textW - cx));
+		blit(ctx, sheet, piece(GEN_TOP.leftEnd), tx - GEN_TOP.w, y);
+		blit(ctx, sheet, piece(GEN_TOP.rightEnd), tx + textW, y);
+		let cx = tx;
+		for (const c of chars) {
+			const l = letters[c];
+			if (l) ctx.drawImage(sheet, l.x, GEN_TEXT[state], l.w, GEN_TEXT.h, cx, y + GEN_TEXT.dy, l.w, GEN_TEXT.h);
+			cx += l?.w ?? GEN_TEXT.space;
+		}
+	}
+	blit(ctx, sheet, piece(GEN_TOP.left), x, y);
+	blit(ctx, sheet, piece(GEN_TOP.right), x + w - GEN_TOP.w, y);
 	if (closePressed) blit(ctx, sheet, GEN.closeSelected, x + w + ART_CLOSE.dx, y + ART_CLOSE.y);
 
 	const sideBottom = y + h - i.bottom - GEN.middleLeftBottom.h;
@@ -174,8 +251,9 @@ function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed) {
  * eqmain.bmp: the titlebar's two ends kept and its middle tiled, then the background's left,
  * right and bottom edges as a thin border, stretched along their length.
  * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} sheet @param {Rect} at @param {boolean} closePressed
+ * @param {boolean} lit
  */
-function drawEqFrame(ctx, sheet, { x, y, w, h }, closePressed) {
+function drawEqFrame(ctx, sheet, { x, y, w, h }, closePressed, lit) {
 	const i = INSET.eq;
 	const bg = EQ.background;
 	const bar = EQ.titleBar;
@@ -193,9 +271,11 @@ function drawEqFrame(ctx, sheet, { x, y, w, h }, closePressed) {
 	ctx.drawImage(sheet, bg.x + i.left, sy, bg.w - i.left - i.right, i.bottom, x + i.left, by, w - i.left - i.right, i.bottom);
 
 	// Titlebar: a plain strip tiled across, then its two ends over that.
-	for (let tx = x; tx < x + w; tx += EQ_TITLE_FILL.w) blit(ctx, sheet, EQ_TITLE_FILL, tx, y);
+	const title = lit ? EQ.titleBarFocused : bar;
+	const fill = { ...EQ_TITLE_FILL, y: title.y };
+	for (let tx = x; tx < x + w; tx += fill.w) blit(ctx, sheet, fill, tx, y);
 	const end = Math.min(EQ_TITLE_END, Math.floor(w / 2));
-	blit(ctx, sheet, bar, x, y, end);
-	blit(ctx, sheet, bar, x + w - end, y, end, bar.w - end);
+	blit(ctx, sheet, title, x, y, end);
+	blit(ctx, sheet, title, x + w - end, y, end, title.w - end);
 	if (closePressed) blit(ctx, sheet, EQ.closeSelected, x + w + ART_CLOSE.dx, y + ART_CLOSE.y);
 }

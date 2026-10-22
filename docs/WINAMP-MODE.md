@@ -76,10 +76,15 @@ analyse: `viz.rs` sends the captured waveform as well (`winamp-wave`, 1024 bytes
 only while the window is open), and Butterchurn's `render()` takes it directly (no AudioContext at
 all). With no waveform (not Linux), a made-up one keeps it moving while music plays.
 
-Presets change every 20 seconds with a blend; N / P next and previous, F or a double-click
-fullscreen, Esc leaves it. Drag to move, the bottom-right corner to resize (remembered); the
-right-click menu has the rest, including the current preset's name. The other Winamp keys work
-here too.
+It sits in the skin's generic frame, titled MILKDROP; fullscreen drops the frame. Presets
+change automatically with a blend, every 20 seconds unless the right-click menu says otherwise
+(off, 10 s to 5 min). N / P next and previous, L the preset browser (MilkDrop's own key: a
+filterable list over the picture in the skin's playlist colours; click or Enter picks, Esc or L
+closes), F or a double-click fullscreen, Esc leaves it. Drag to move, the frame's corner to resize
+(remembered). Two on-screen texts, each shown on change (for five seconds), always, or never from
+the right-click menu: the preset's name (bottom left) and the track's artist, title and time
+(top left, on every track change). The other Winamp keys work here too; all the settings are
+remembered.
 
 ## Playlist editor
 
@@ -94,7 +99,7 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 
 | Button | Does |
 |---|---|
-| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
+| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
 | REM | Remove the selected track, or clear the queue |
 | SEL | Save the queue as a playlist, in the YouTube Music library (signed in) or only on this machine |
 | MISC | Sort what plays next by title or artist, or reverse it |
@@ -183,11 +188,27 @@ The clutterbar's **I**, Alt+A, or right-click → **Album Art** shows the playin
 player (at its height), below the stack (at its width), or in a floating window (the default). Winamp
 5's Album Art window is drawn with the generic window frame (`gen.bmp`); most older skins don't
 have one, so they get a frame cut from the equalizer window (`eqmain.bmp`: its titlebar ends, a
-4 px border from its edges, an "ALBUM ART" label over its title). The cover is always square:
+4 px border from its edges, an "ALBUM ART" label over its title). Either way it's titled ALBUM
+ART (just ART when it's too narrow). The cover is always square:
 video thumbnails (16:9) are cropped to a centred square. Double-clicking docked art moves it on
 (right → below → left); dragging it moves the window. Docked left, the main window and the stack
 shift right inside the window: on Wayland an app can't move its own window, so the player itself
 jumps right on screen. Code: `ui/src/lib/skin/render/albumArt.js`, `ui/src/lib/skin/art.js`.
+
+## Titlebars
+
+Like Winamp, the active window's titlebar is lit and the rest are dimmed: main window
+(`titlebar.bmp` y 0 / 15), playlist editor and search (`pledit.bmp` y 0 / 21), equalizer
+(`eqmain.bmp` y 134 / 149), generic frames (`gen.bmp` y 0 / 21). Several of Winamp's windows
+share the one Winamp window here, so the active one is the one last clicked; a floating panel's
+is lit while its window has focus, and nothing is lit while the app isn't focused
+(`ui/src/lib/skin/focus.js`).
+
+Generic frames (album art, lyrics, MilkDrop, Open URL) carry their title in `gen.bmp`'s own
+alphabet, A-Z in a lit row (y 88) and a dim one (y 96), each letter its own width, separated by
+1 px columns of the colour at x 0: measured per skin, as Webamp does. The title sits on the
+titlebar's centre fill between its end caps. A `gen.bmp` without those letters, or a skin with no
+`gen.bmp` (the frame cut from `eqmain.bmp` then), falls back to `text.bmp`'s letters.
 
 ## Floating panels
 

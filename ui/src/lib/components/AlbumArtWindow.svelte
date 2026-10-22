@@ -10,6 +10,7 @@
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, artSize, drawAlbumArt } from '../skin/render/albumArt.js';
+	import { setActivePart } from '../skin/focus.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { coverFor } from '../skin/art.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
@@ -31,6 +32,7 @@
 		emitTo('winamp', 'winamp-panel-dock', { kind: 'art', dock }).catch((e) => console.error('dock request failed', e));
 
 	onMount(() => {
+		setActivePart('art');
 		pinOneToOnePixels().catch((e) => logUi('error', `album art zoom pin failed: ${e}`));
 
 		const reload = () =>

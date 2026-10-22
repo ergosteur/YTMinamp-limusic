@@ -21,6 +21,7 @@
 	} from '../skin/render/playlist.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { attachInput } from '../skin/input.js';
+	import { setActivePart } from '../skin/focus.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { LYRICS_ZOOM_EVENT, SEARCH_INPUT_ID, flashSearch, followQueue, loadSkin, playIndex, searchKeydown } from '../skin/skinApi.js';
 	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
@@ -53,6 +54,8 @@
 	const onSearchKey = (/** @type {KeyboardEvent} */ e) => searchKeydown(e, searchInput, size(), () => dockTo(null));
 
 	onMount(() => {
+		// This window holds just the one panel: it's the active one whenever the window has focus.
+		setActivePart(kind);
 		pinOneToOnePixels().catch((e) => logUi('error', `${kind} window zoom pin failed: ${e}`));
 		// This window's own copy of the panel state starts open, wherever the Winamp window had it.
 		({ playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics })[kind].open = true;

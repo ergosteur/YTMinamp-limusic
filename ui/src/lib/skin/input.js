@@ -47,6 +47,7 @@ import { EQ_BANDS, eqHit, eqValueAt } from './render/equalizer.js';
 import { LYRICS_WHEEL_ROWS } from './render/lyrics.js';
 import { LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
 import { savePref } from './prefs.js';
+import { setActivePart } from './focus.js';
 import { uiState } from './uiState.js';
 import { playback } from '$lib/player.svelte';
 import { closeWinamp } from '$lib/api';
@@ -452,6 +453,7 @@ export function attachInput(canvas, host) {
 		const { x, y } = canvasPoint(canvas, event);
 		const at = { x: event.clientX, y: event.clientY };
 		const hit = host.hitTest(x, y);
+		if (hit) setActivePart(hit.kind);
 		const i = hit?.kind === 'search' ? rowAt('search', hit.px, hit.py, hit) : null;
 		if (i !== null) {
 			uiState.search.selected = i;
@@ -468,6 +470,8 @@ export function attachInput(canvas, host) {
 		const point = canvasPoint(canvas, event);
 		const hit = host.hitTest(point.x, point.y);
 		if (!hit) return;
+		// The window clicked becomes the active one, its titlebar lit (focus.js).
+		setActivePart(hit.kind);
 		if (hit.kind === 'art') {
 			if (onArtClose(hit)) {
 				uiState.art.closePressed = true;

@@ -289,8 +289,12 @@ export function showLyricsMenu(at) {
 
 /**
  * The MilkDrop window's menu. `controls` is the window's own (MilkdropWindow.svelte).
- * @param {{ next: () => void, previous: () => void, hardCut: () => void, toggleAuto: () => void,
- *   auto: boolean, preset: string, toggleFullscreen: () => Promise<void>, close: () => void }} controls
+ * @typedef {'change' | 'always' | 'never'} OsdMode
+ * @param {{ next: () => void, previous: () => void, hardCut: () => void,
+ *   autoSeconds: number, setAutoSeconds: (s: number) => void, preset: string,
+ *   toggleFullscreen: () => Promise<void>, close: () => void,
+ *   presetOsd: OsdMode, trackOsd: OsdMode, setPresetOsd: (m: OsdMode) => void,
+ *   setTrackOsd: (m: OsdMode) => void, browse: () => void }} controls
  * @param {MenuAt} at
  */
 export function showMilkdropMenu(controls, at) {
@@ -299,10 +303,29 @@ export function showMilkdropMenu(controls, at) {
 			items: [
 				{ text: controls.preset || 'Loading presets...', enabled: false },
 				SEPARATOR,
+				{ text: 'Browse presets...', accel: 'L', action: () => controls.browse() },
 				{ text: 'Next preset', accel: 'N', action: () => controls.next() },
 				{ text: 'Previous preset', accel: 'P', action: () => controls.previous() },
 				{ text: 'Random preset, no blend', action: () => controls.hardCut() },
-				{ text: 'Change presets automatically', checked: controls.auto, action: () => controls.toggleAuto() },
+				{
+					text: 'Change presets automatically',
+					items: /** @type {[number, string][]} */ ([
+						[0, 'Off'],
+						[10, 'Every 10 seconds'],
+						[20, 'Every 20 seconds'],
+						[30, 'Every 30 seconds'],
+						[60, 'Every minute'],
+						[120, 'Every 2 minutes'],
+						[300, 'Every 5 minutes']
+					]).map(([seconds, text]) => ({
+						text,
+						checked: controls.autoSeconds === seconds,
+						action: () => controls.setAutoSeconds(seconds)
+					}))
+				},
+				SEPARATOR,
+				{ text: 'Visualization Preset OSD', items: osdItems(controls.presetOsd, controls.setPresetOsd) },
+				{ text: 'Track Info OSD', items: osdItems(controls.trackOsd, controls.setTrackOsd) },
 				SEPARATOR,
 				{ text: 'Fullscreen', accel: 'F', action: () => controls.toggleFullscreen().catch(log('fullscreen')) },
 				{ text: 'Close', accel: 'Ctrl+Shift+K', action: () => controls.close() }
@@ -310,6 +333,20 @@ export function showMilkdropMenu(controls, at) {
 		}),
 		at
 	);
+}
+
+/**
+ * When an on-screen text shows, as a submenu.
+ * @param {OsdMode} current @param {(m: OsdMode) => void} set
+ */
+function osdItems(current, set) {
+	/** @type {[OsdMode, string][]} */
+	const modes = [
+		['change', 'Show on change'],
+		['always', 'Always show'],
+		['never', 'Never show']
+	];
+	return modes.map(([mode, text]) => ({ text, checked: current === mode, action: () => set(mode) }));
 }
 
 /** @param {number} preamp @param {number[]} bands */

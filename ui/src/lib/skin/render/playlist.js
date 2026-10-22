@@ -4,6 +4,7 @@
 // pledit.txt. Coordinates: Webamp's skinSprites.ts PLEDIT table and playlist-window.css.
 
 import { drawText } from './marquee.js';
+import { isLit } from '../focus.js';
 
 /** Docked size: Winamp's default. */
 export const PL_W = 275;
@@ -182,19 +183,21 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 	const g = geometry(size);
 	const LIST = g.list;
 
-	// Frame: top bar tiles, corners and title; side tiles; bottom tiles under the two corners.
+	// Frame: top bar tiles, corners and title (the lit row, y 0, when it's the active window);
+	// side tiles; bottom tiles under the two corners.
+	const top = (/** @type {{ x: number, y: number, w: number, h: number }} */ r) => (isLit(kind) ? { ...r, y: 0 } : r);
 	for (let x = PLEDIT.topLeft.w; x < w - PLEDIT.topRight.w; x += PLEDIT.topTile.w) {
-		blit(ctx, sheet, PLEDIT.topTile, x, oy);
+		blit(ctx, sheet, top(PLEDIT.topTile), x, oy);
 	}
-	blit(ctx, sheet, PLEDIT.topLeft, 0, oy);
+	blit(ctx, sheet, top(PLEDIT.topLeft), 0, oy);
 	if (kind === 'playlist') {
-		blit(ctx, sheet, PLEDIT.title, Math.floor((w - PLEDIT.title.w) / 2), oy);
+		blit(ctx, sheet, top(PLEDIT.title), Math.floor((w - PLEDIT.title.w) / 2), oy);
 	} else if (text) {
 		// pledit.bmp's title is baked-in "WINAMP PLAYLIST"; the search panel spells its own.
 		const label = 'search';
 		drawText(ctx, text, label, Math.floor((w - label.length * 5) / 2), oy + 7);
 	}
-	blit(ctx, sheet, PLEDIT.topRight, w - PLEDIT.topRight.w, oy);
+	blit(ctx, sheet, top(PLEDIT.topRight), w - PLEDIT.topRight.w, oy);
 	for (let y = TOP_H; y < h - BOTTOM_H; y += TILE_H) {
 		blit(ctx, sheet, PLEDIT.leftTile, 0, oy + y);
 		blit(ctx, sheet, PLEDIT.rightTile, w - RIGHT_W, oy + y);

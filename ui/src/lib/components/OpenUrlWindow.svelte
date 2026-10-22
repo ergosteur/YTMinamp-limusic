@@ -1,7 +1,7 @@
 <script>
 	// The ADD menu's Open YouTube URL dialog, a small window of its own (label "winamp-url", see
 	// +layout.svelte and winamp.rs) in the skin's generic frame: paste a YouTube / YouTube Music
-	// link, Enter plays it (playlistActions.js `openLink`), Esc or ✕ closes it.
+	// link, Enter or OK plays it (playlistActions.js `openLink`), Esc or ✕ closes it.
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen } from '@tauri-apps/api/event';
@@ -11,12 +11,15 @@
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
+	import { isLit, setActivePart } from '../skin/focus.js';
 	import { openLink } from '../skin/playlistActions.js';
 
 	const WIDTH = 275;
-	/** The text box and the status line under it. */
+	/** The text box and OK beside it, and the status under them: up to two lines, wrapped. */
 	const BOX_H = 17;
-	const BODY_H = BOX_H + 18;
+	const OK_W = 30;
+	const STATUS_LINE = 13;
+	const BODY_H = BOX_H + 8 + 2 * STATUS_LINE;
 
 	/** @type {HTMLCanvasElement} */
 	let canvas;
@@ -44,7 +47,7 @@
 		canvas.style.height = `${h}px`;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, w, h);
-		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'open url');
+		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'open url', isLit('url'));
 	}
 
 	async function submit() {
@@ -75,6 +78,10 @@
 	}
 
 	onMount(() => {
+		setActivePart('url');
+		// The titlebar lights with focus, and this only draws when something changes.
+		window.addEventListener('focus', draw);
+		window.addEventListener('blur', draw);
 		pinOneToOnePixels().catch((e) => logUi('error', `open url zoom pin failed: ${e}`));
 		const reload = () =>
 			loadSkin()
@@ -122,6 +129,8 @@
 		window.addEventListener('mouseup', onUp);
 
 		return () => {
+			window.removeEventListener('focus', draw);
+			window.removeEventListener('blur', draw);
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('mousemove', onMove);
 			window.removeEventListener('mouseup', onUp);
@@ -138,7 +147,7 @@
 		class="absolute m-0 border px-1 py-0 text-[11px] leading-none outline-none"
 		style:left="{inset.left + 3}px"
 		style:top="{inset.top + 3}px"
-		style:width="{WIDTH - inset.left - inset.right - 6}px"
+		style:width="{WIDTH - inset.left - inset.right - 6 - OK_W - 4}px"
 		style:height="{BOX_H}px"
 		style:background={pledit.normalBg ?? '#000000'}
 		style:color={pledit.normal ?? '#00ff00'}
@@ -152,11 +161,27 @@
 		disabled={busy}
 		onkeydown={onKey}
 	/>
+	<button
+		class="absolute m-0 border p-0 text-[11px] leading-none disabled:opacity-50"
+		style:left="{WIDTH - inset.right - 3 - OK_W}px"
+		style:top="{inset.top + 3}px"
+		style:width="{OK_W}px"
+		style:height="{BOX_H}px"
+		style:background={pledit.normalBg ?? '#000000'}
+		style:color={pledit.current ?? '#ffffff'}
+		style:border-color={pledit.normal ?? '#00ff00'}
+		style:font-family={font}
+		type="button"
+		disabled={busy}
+		onclick={submit}>OK</button
+	>
 	<div
-		class="pointer-events-none absolute truncate text-[11px] leading-none"
+		class="pointer-events-none absolute overflow-hidden text-[11px]"
 		style:left="{inset.left + 4}px"
-		style:top="{inset.top + BOX_H + 7}px"
+		style:top="{inset.top + BOX_H + 6}px"
 		style:width="{WIDTH - inset.left - inset.right - 8}px"
+		style:line-height="{STATUS_LINE}px"
+		style:max-height="{2 * STATUS_LINE}px"
 		style:color={pledit.normal ?? '#00ff00'}
 		style:font-family={font}
 	>

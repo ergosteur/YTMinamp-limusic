@@ -3,12 +3,15 @@
 // filter in the player yet), like the balance slider. Coordinates: Webamp's skinSprites.ts
 // EQMAIN, equalizer-window.css and EqualizerWindow/Band.tsx + EqGraph.tsx.
 
+import { isLit } from '../focus.js';
+
 export const EQ_W = 275;
 export const EQ_H = 116;
 
 const SPRITES = {
 	background: { x: 0, y: 0, w: 275, h: 116 },
 	titleBar: { x: 0, y: 149, w: 275, h: 14 },
+	titleBarSelected: { x: 0, y: 134, w: 275, h: 14 },
 	closeActive: { x: 0, y: 125, w: 9, h: 9 },
 	thumb: { x: 0, y: 164, w: 11, h: 11 },
 	thumbSelected: { x: 0, y: 176, w: 11, h: 11 },
@@ -124,7 +127,7 @@ export function drawEqualizer(ctx, sprites, eq, oy) {
 	const blit = (r, x, y) => ctx.drawImage(sheet, r.x, r.y, r.w, r.h, x, oy + y, r.w, r.h);
 
 	blit(S.background, 0, 0);
-	blit(S.titleBar, 0, 0);
+	blit(isLit('eq') ? S.titleBarSelected : S.titleBar, 0, 0);
 	if (eq.pressed === 'close') blit(S.closeActive, L.close.x, L.close.y);
 
 	const on = eq.pressed === 'on' ? (eq.on ? S.onSelectedDepressed : S.onDepressed) : eq.on ? S.onSelected : S.on;

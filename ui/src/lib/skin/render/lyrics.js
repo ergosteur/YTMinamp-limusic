@@ -3,6 +3,7 @@
 // and lit; the wheel scrolls by hand until the next track.
 import { drawFrame, artFrame, frameInset } from './albumArt.js';
 import { lyricsShow } from '../lyrics.js';
+import { isLit } from '../focus.js';
 
 /** At zoom 1: the playlist editor's text size. */
 const LINE_H = 15;
@@ -116,7 +117,7 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		}
 	}
 	ctx.restore();
-	drawFrame(ctx, sprites, at, closePressed, 'lyrics');
+	drawFrame(ctx, sprites, at, closePressed, 'lyrics', isLit('lyrics'));
 }
 
 /** Rows the panel scrolls by per wheel notch. */

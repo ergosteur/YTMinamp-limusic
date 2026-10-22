@@ -31,6 +31,7 @@ import { drawTimeDigits } from "./numbers.js";
 import { drawText, drawTitle } from "./marquee.js";
 import { drawAnalyzer } from "./visualizer.js";
 import { analyzerColumns } from "../testPattern.js";
+import { isLit } from "../focus.js";
 
 /** @typedef {import("../ipc.js").RegionPayload} RegionPayload */
 
@@ -105,9 +106,10 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
   if (!main) return;
   ctx.drawImage(main, 0, 0);
   // The titlebar ("WINAMP" and its buttons) comes from titlebar.bmp, not main.bmp, whose top strip
-  // many skins leave blank. Webamp's MAIN_TITLE_BAR_SELECTED.
+  // many skins leave blank. Webamp's MAIN_TITLE_BAR_SELECTED (y 0) while it's the active window,
+  // MAIN_TITLE_BAR (y 15) otherwise.
   const titlebar = sprites.get("titlebar");
-  if (titlebar) ctx.drawImage(titlebar, 27, 0, MAIN_W, 14, 0, 0, MAIN_W, 14);
+  if (titlebar) ctx.drawImage(titlebar, 27, isLit("main") ? 0 : 15, MAIN_W, 14, 0, 0, MAIN_W, 14);
 
   if (uiState.visMode === "analyzer") {
     drawAnalyzer(ctx, uiState.viscolor, analyzerColumns(performance.now()));
