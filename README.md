@@ -1,10 +1,33 @@
-> **This is ytminamp**, a fork of [Limusic](https://github.com/SimoHypers/limusic) that adds a
-> classic **Winamp 2.x skin mode**: a second "mini player" that renders real `.wsz` skins,
-> opened from the titlebar next to the mini-player button. Everything else is upstream Limusic,
-> unmodified where possible so upstream updates merge cleanly. See
-> [docs/WINAMP-MODE.md](docs/WINAMP-MODE.md), including
-> [credits](docs/WINAMP-MODE.md#credits) for [Webamp](https://github.com/captbaritone/webamp)
-> and the skin authors. The rest of this README is upstream's.
+<div align="center">
+
+<img src="./packaging/icon/ytminamp.svg" alt="" width="96">
+
+# YTMinamp (limusic)
+
+**Limusic, the native YouTube Music client, with a classic Winamp 2.x skin mode.**
+
+<img src="./docs/images/ytminamp-winamp-mode.jpg" alt="Winamp mode: main window, equalizer, search, playlist and album art down the left, synced Korean lyrics in the middle, the MilkDrop visualizer on the right" width="100%">
+
+**[Download the latest build](https://github.com/ergosteur/YTMinamp-limusic/releases)** (Linux, Windows, macOS)
+
+</div>
+
+YTMinamp is a fork of [Limusic](https://github.com/SimoHypers/limusic) that adds a second "mini
+player", opened from the titlebar next to Limusic's own mini-player button, drawn from real
+`.wsz` Winamp skins:
+
+- the main window, equalizer, playlist editor, search, album art and lyrics (synced, zoomable,
+  with Limusic's romanization and translations), each docked in the stack or floating;
+- a spectrum analyzer and a MilkDrop visualizer ([Butterchurn](https://github.com/jberg/butterchurn));
+- Winamp's keyboard shortcuts, skins from a folder, double size, always on top.
+
+Everything else is upstream Limusic, unmodified where possible so upstream updates merge cleanly.
+See [docs/WINAMP-MODE.md](docs/WINAMP-MODE.md), including the
+[credits](docs/WINAMP-MODE.md#credits) for [Webamp](https://github.com/captbaritone/webamp),
+Butterchurn and the skin authors. An unofficial fan project, not affiliated with Winamp or
+Nullsoft. **The rest of this README is upstream Limusic's.**
+
+---
 
 <div align="center">
 
