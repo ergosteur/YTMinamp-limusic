@@ -597,6 +597,9 @@ export const setWinampPrefs = (patch: Record<string, unknown>) =>
 	invoke<void>('set_winamp_prefs', { patch });
 /** Keep every Winamp window above others, or not (remembered). */
 export const setWinampAlwaysOnTop = (on: boolean) => invoke<void>('set_winamp_always_on_top', { on });
+/** Retune the Winamp EQ (sliders 0-100, 50 = 0 dB). */
+export const setWinampEq = (eq: { on: boolean; preamp: number; bands: number[] }) =>
+	invoke<void>('set_winamp_eq', { eq });
 /** The playing stream as mpv decodes it; each field null until mpv knows. */
 export const winampAudioInfo = () =>
 	invoke<{ kbps: number | null; khz: number | null; channels: number | null }>('winamp_audio_info');

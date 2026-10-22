@@ -293,9 +293,10 @@ export function zoomLyrics(by) {
 /** Tells every Winamp window the lyrics' new size (see `zoomLyrics`). */
 export const LYRICS_ZOOM_EVENT = 'winamp-lyrics-zoom';
 
-/** Remember the EQ's settings (for show: nothing filters the sound yet). */
+/** Apply the EQ's settings to what plays (viz.rs's `@eq` filter) and remember them. */
 export function saveEq() {
 	const { on, auto, preamp, bands } = uiState.eq;
+	api.setWinampEq({ on, preamp, bands: [...bands] }).catch(log('eq'));
 	savePref('eq', { on, auto, preamp, bands });
 }
 

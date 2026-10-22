@@ -138,7 +138,7 @@ function runButtonAction(name) {
 }
 
 /**
- * Move an EQ slider (for show: nothing filters the sound yet) and remember it.
+ * Move an EQ slider: it applies at once (viz.rs's `@eq` filter) and is remembered.
  * @param {'preamp' | number} slider @param {number} value 0-100
  */
 function setEqSlider(slider, value) {
@@ -315,7 +315,7 @@ function tooltipAt(hit) {
 	if (hit.kind === 'eq') {
 		const h = eqHit(hit.px, hit.py);
 		if (h === 'close') return 'Close equalizer';
-		if (h === 'title') return 'Equalizer: for show, it doesn\'t change the sound yet (double-click to float or dock)';
+		if (h === 'title') return 'Equalizer (double-click to float or dock)';
 		if (h === 'on') return 'Equalizer on/off';
 		if (h === 'auto') return 'Auto-load presets (for show)';
 		if (h === 'presets') return "Winamp's presets";

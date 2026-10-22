@@ -49,21 +49,40 @@ Kept small so upstream merges stay easy. If a merge conflicts, these are the pla
 
 ## Spectrum analyzer
 
-libmpv has no PCM tap, so `src-tauri/src/viz.rs` records the default output's **monitor** source
-through the PulseAudio API (PipeWire's pulse server on modern Linux), runs Winamp's own FFT
-(Nullsoft vis_classic, via Webamp's port) and emits 75 columns to the Winamp window as
-`winamp-viz` at ~60 Hz. It runs only while the Winamp window is open. Bar grouping, falloff and
-peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from the skin's
-`viscolor.txt` (stock Winamp palette for missing slots). Click the analyzer to turn it off/on.
+libmpv hands out no samples, but its audio runs through ffmpeg's filter graph, and a filter's
+measurements come back as frame metadata (mpv's `af-metadata/<label>` property). So the first
+time the Winamp window opens, `src-tauri/src/viz.rs` appends a labelled filter, `@viz`, to the end
+of the player's chain (`Player::set_extra_af` in `crates/player`), after the EQ (see
+[Equalizer](#equalizer)), and leaves it there for the session; it's read only while the Winamp
+window is open:
 
-Limits: it shows everything playing on that output, not only this app (per-stream monitoring is
-possible with the async pulse API, not done yet); Linux only; no oscilloscope mode yet.
+```
+aformat=stereo, asplit → [music] + [mono copy] → asplit into 19 → bandpass per bar
+→ amerge(music, 19 bands) → astats (RMS per channel, per frame) → pan back to the music's two channels
+```
 
-Where there's no live feed (Windows and macOS for now, or Linux without a monitor source) the
+What you hear passes through untouched; the band levels ride along as metadata, read about 60
+times a second (mpv runs the graph as its audio output asks for more: about 60 Hz on PipeWire,
+47 on PulseAudio). It's the same on Linux, Windows and macOS, and it shows only this app's audio.
+It costs roughly 7% of one core, mostly `astats` measuring 21 channels, from the first time the
+Winamp window opens until the app quits.
+
+The 19 bands sit on the 19 bars Winamp draws (75 columns in fours, with Webamp's mostly-logarithmic
+column mapping: 69 Hz to 20 kHz), and each band's level is scaled to what Winamp's own FFT
+(Nullsoft vis_classic, via Webamp's port) shows for it. The factors were measured with pink
+noise against a port of that FFT, and agree within a few percent on white noise. mpv filters
+ahead of its output buffer, so the levels are held back 0.2 s to line up with what you hear.
+Falloff and peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from the
+skin's `viscolor.txt` (stock Winamp palette for missing slots). Click the analyzer to turn it
+off/on.
+
+If mpv refuses the filter (a libmpv whose ffmpeg lacks one of them), no levels arrive and the
 analyzer plays test patterns while music plays rather than sitting empty: sweeps at different
 speeds, a travelling wave, random bars, a staircase, a pulse, a new one every six seconds
-(`ui/src/lib/skin/testPattern.js`). "No live feed" means no `winamp-viz` columns for half a
-second, so it never cuts in on Linux, where silence still arrives as columns.
+(`ui/src/lib/skin/testPattern.js`).
+
+Limits: 19 bands, not a full FFT (exactly what the classic analyzer shows, but no oscilloscope
+mode, which needs the waveform).
 
 ## MilkDrop (Butterchurn)
 
@@ -72,9 +91,12 @@ plug-in key), opens `MilkdropWindow.svelte` in a window of its own (`winamp-milk
 [Butterchurn](https://github.com/jberg/butterchurn), the WebGL port of MilkDrop Webamp uses,
 playing the [butterchurn-presets](https://github.com/jberg/butterchurn-presets) pack, both MIT and
 loaded only when the window opens. mpv plays outside the webview, so there's no WebAudio to
-analyse: `viz.rs` sends the captured waveform as well (`winamp-wave`, 1024 bytes, silence at 128,
-only while the window is open), and Butterchurn's `render()` takes it directly (no AudioContext at
-all). With no waveform (not Linux), a made-up one keeps it moving while music plays.
+analyse, nor any samples from mpv: `viz.rs` makes a waveform from the 19 band levels (a tone per
+band at its level, phases carried on between frames) and sends it as `winamp-wave` (1024 bytes,
+silence at 128, only while the window is open). Butterchurn's `render()` takes it directly (no
+AudioContext at all), and its bass/mid/treble, which most presets react to, follow the music.
+Only the shape of the wave drawn is made up. With no levels at all, the window makes up its own
+signal while music plays.
 
 It sits in the skin's generic frame, titled MILKDROP; fullscreen drops the frame. Presets
 change automatically with a blend, every 20 seconds unless the right-click menu says otherwise
@@ -157,9 +179,17 @@ playlist.
 
 `render/equalizer.js`: Winamp's EQ window from `eqmain.bmp`, docked under the main window (or
 floating), with ON/AUTO, the preamp and ten bands, the response curve (a natural cubic spline,
-coloured from the skin's colour strip), and PRESETS with Winamp's built-in presets. **It changes
-nothing you hear** — there's no EQ filter in the player yet — like the balance slider. Its settings
-are remembered.
+coloured from the skin's colour strip), and PRESETS with Winamp's built-in presets. It's real:
+`src-tauri/src/viz.rs` puts an `@eq` filter into mpv's chain (a `volume` preamp, then a
+one-octave `equalizer` per band at Winamp's 60 Hz-16 kHz, ±12 dB), and every slider move retunes
+it live through mpv's `af-command` (`Player::af_command`), so nothing rebuilds and nothing clicks.
+OFF flattens it. AUTO (loading a preset per track) is remembered but not acted on.
+
+The EQ and the analyzer's filter go in the first time the Winamp window opens and stay until the
+app quits, so the EQ goes on sounding the same in the full Limusic window, and switching back
+and forth never rebuilds the chain. After a restart a saved EQ applies from the first time the
+Winamp window opens. A crossfade's second deck copies the chain as first built, so the EQ is sent
+again twice a second to put it right.
 
 ## Lyrics
 
@@ -302,7 +332,7 @@ scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminam
 scripts/build-fedora.sh rpm  # the same, plus dist/ytminamp-<version>-1.x86_64.rpm
 ```
 
-It links against the distro's own webkit2gtk4.1, mpv-libs and pulseaudio-libs (all present on a
+It links against the distro's own webkit2gtk4.1 and mpv-libs (both present on a
 stock Fedora 44 desktop). App data lives under the `com.ytminamp.desktop` identifier, separate
 from an installed Limusic. The default skin, Winamp 2.91's own, is compiled in
 (`src-tauri/skins/base-2.91.wsz`).
@@ -324,11 +354,10 @@ error and the app aborts.
 
 ## Not done yet
 
-- A working equalizer (the window is for show); shade mode; oscilloscope.
+- Shade mode; oscilloscope; EQ AUTO (per-track presets).
 - The Media Library window.
 - Multiple selection in the playlist.
 - Snapping floating windows together.
-- Live audio for the analyzer and MilkDrop on Windows and macOS (they show test patterns there).
 - Search covers songs only (no albums, artists, playlists or typeahead).
 - Fractional desktop scaling (e.g. 125%) blurs the skin evenly: GTK3 renders the window at 1x and
   the compositor scales it. Pixel art can't be both sharp and evenly sized at 1.25x.

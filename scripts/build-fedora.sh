@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a release binary for Fedora 44 inside a rootless podman container — no Nix and no host
 # toolchain needed. Output: dist/ytminamp, linked against Fedora 44's system libraries.
-# Runtime needs (all in a stock Fedora 44 desktop): webkit2gtk4.1, mpv-libs, pulseaudio-libs, gtk3.
+# Runtime needs (all in a stock Fedora 44 desktop): webkit2gtk4.1, mpv-libs, gtk3.
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"

@@ -112,6 +112,9 @@ pub struct Player {
     /// that write to it have to be re-applied together: a bare `set_property("af", ...)` from
     /// either one would drop the other's filter.
     af: Mutex<(Option<f64>, i32)>,
+    /// One more filter for the end of the chain, for an app that wants to analyse what plays
+    /// (ytminamp's visualizers read band levels from it via [`Self::af_metadata`]). None: nothing.
+    extra_af: Mutex<Option<String>>,
 }
 
 /// One mpv instance plays one file at a time, so an *overlap* needs a second decoder and a second
@@ -352,7 +355,7 @@ impl Player {
             wid: AtomicI64::new(0),
         });
         spawn_deck_events(&a, 0, decks.clone())?;
-        Ok(Player { decks, events: Some(rx), af: Mutex::new((None, 0)) })
+        Ok(Player { decks, events: Some(rx), af: Mutex::new((None, 0)), extra_af: Mutex::new(None) })
     }
 
     /// The deck the app is hearing. Every command below acts on this one.
@@ -704,9 +707,43 @@ impl Player {
         Ok(())
     }
 
+    /// Append `filter` (mpv `af` syntax, give it a `@label`) to the end of the chain, or take it
+    /// off with None. Rebuilds the chain, so set it once rather than per track. A filter mpv
+    /// can't build is refused and the chain left as it was.
+    pub fn set_extra_af(&self, filter: Option<&str>) -> Result<(), Error> {
+        let previous = std::mem::replace(&mut *self.extra_af.lock().unwrap(), filter.map(str::to_owned));
+        if let Err(e) = self.apply_af() {
+            *self.extra_af.lock().unwrap() = previous;
+            let _ = self.apply_af();
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Retune a running filter without rebuilding the chain (mpv's `af-command`): send `command`
+    /// `argument` to the filters called `target` inside the one labelled `label` (an ffmpeg
+    /// filter's runtime commands, e.g. an `equalizer`'s `g`). Goes to the deck playing.
+    pub fn af_command(&self, label: &str, command: &str, argument: &str, target: &str) -> Result<(), Error> {
+        self.mpv().command("af-command", &[label, command, argument, target])?;
+        Ok(())
+    }
+
+    /// The metadata the filter labelled `label` attached to the audio it last passed (mpv's
+    /// `af-metadata/<label>`), as mpv's JSON object string; None before it has any.
+    pub fn af_metadata(&self, label: &str) -> Option<String> {
+        self.mpv().get_property::<String>(&format!("af-metadata/{label}")).ok()
+    }
+
     fn apply_af(&self) -> Result<(), Error> {
         let (gain_db, semitones) = *self.af.lock().unwrap();
-        self.mpv().set_property("af", af_chain(gain_db, semitones).as_str())?;
+        let mut chain = af_chain(gain_db, semitones);
+        if let Some(extra) = self.extra_af.lock().unwrap().as_deref() {
+            if !chain.is_empty() {
+                chain.push(',');
+            }
+            chain.push_str(extra);
+        }
+        self.mpv().set_property("af", chain.as_str())?;
         Ok(())
     }
 }

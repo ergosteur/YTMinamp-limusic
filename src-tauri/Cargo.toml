@@ -104,9 +104,6 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Winamp analyzer: recording the output's monitor source (viz.rs). Talks to PipeWire's pulse server.
-libpulse-binding = "2"
-libpulse-simple-binding = "2"
 # The music video's GL surface under the webview (nativevideo.rs). Same version tauri pulls in.
 gtk = "0.18"
 ksni = "0.3.6"

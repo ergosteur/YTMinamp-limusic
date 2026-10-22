@@ -91,7 +91,7 @@ pub fn close(app: &AppHandle) {
     if app.get_webview_window(LABEL).is_none() {
         return;
     }
-    crate::viz::stop();
+    crate::viz::stop(app);
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(w) = handle.get_webview_window(LABEL) {

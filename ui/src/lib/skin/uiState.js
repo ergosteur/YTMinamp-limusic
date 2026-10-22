@@ -42,7 +42,7 @@ export const uiState = {
 	// Docked panels under the main window, top to bottom: search, then the playlist editor.
 	// See layout.js.
 	pl: panelState(),
-	/** The equalizer: looks and moves like Winamp's, changes nothing you hear (no EQ filter yet). */
+	/** The equalizer: Winamp's ten bands and preamp, applied through mpv's filter chain (viz.rs). */
 	eq: {
 		open: false,
 		dock: /** @type {'stack' | 'float'} */ ('stack'),

@@ -1,218 +1,306 @@
-//! Spectrum data for the Winamp window's analyzer.
+//! Winamp mode's audio filters: the equalizer, and spectrum data for the analyzer and the MilkDrop
+//! window, all in mpv's own filter chain.
 //!
-//! mpv plays in-process and libmpv offers no PCM tap, so this records the default output's
-//! monitor source through the PulseAudio API (PipeWire's pulse server on modern Linux) and runs
-//! Winamp's own FFT on it. Consequence: the bars show everything playing on that output, not just
-//! this app. Linux-only; elsewhere the analyzer plays test patterns (`ui/src/lib/skin/testPattern.js`). Runs only while the Winamp window is
-//! open ([`start`] from `winamp::open`, [`stop`] from `winamp::close`).
+//! libmpv hands out no samples, but its audio runs through ffmpeg's filter graph, and a filter's
+//! measurements reach us as frame metadata (mpv's `af-metadata/<label>` property). So the first
+//! time the Winamp window opens, [`start`] appends two labelled filters to the player's chain and
+//! leaves them there until the app quits, so going back and forth between Winamp mode and the full
+//! window never rebuilds the chain (the one moment audio can hiccup) and the EQ keeps sounding the
+//! same in both:
 //!
-//! The FFT and the 75-column frequency mapping are a port of Webamp's (`FFTNullsoft.ts`, itself
-//! from Nullsoft's vis_classic, and `VisPainter.ts`'s `paintAnalyzer`), so bar heights match real
-//! Winamp. Falloff/peak-hold are per *frame*, so they live in the UI's render loop instead.
+//! - `@eq`: Winamp's ten bands (`equalizer`) and preamp (`volume`), retuned live through mpv's
+//!   `af-command` as the sliders move;
+//! - `@viz`: splits off a mono copy, band-passes it once per analyzer bar, merges the bands back as
+//!   extra channels for `astats` to measure, and drops them again. What you hear passes through
+//!   untouched. Same on every OS, and only this app's audio, no OS capture. Read only while the
+//!   Winamp window is open; it costs about 7% of one core (`astats` over 21 channels).
+//!
+//! The 19 bands sit on the 19 bars Winamp draws (75 columns in fours, Webamp's mostly-logarithmic
+//! column mapping), and each band's level is scaled to what Winamp's own FFT (Nullsoft
+//! vis_classic, via Webamp) would show for it: the factors were measured against a port of that
+//! FFT with pink noise and check out within a few percent on white noise. Falloff and peak hold
+//! stay per frame in the UI (`render/visualizer.js`).
+//!
+//! MilkDrop (Butterchurn) wants a waveform; there's none to be had, so it gets one made from the
+//! band levels (a tone per band), which carries the bass/mid/treble the presets react to.
+//!
+//! mpv filters audio before its output buffer, so the levels lead what you hear; they're held
+//! back by about that buffer. No filter (a libmpv without these ffmpeg filters) just means no
+//! levels, and the UI falls back to test patterns.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 
 pub const EVENT: &str = "winamp-viz";
-/// The raw waveform, for the MilkDrop window (Butterchurn): 1024 bytes, silence at 128, as
+/// The made-up waveform, for the MilkDrop window (Butterchurn): 1024 bytes, silence at 128, as
 /// WebAudio's `getByteTimeDomainData` gives them.
 pub const WAVE_EVENT: &str = "winamp-wave";
 const MILKDROP: &str = "winamp-milkdrop";
 
-const RATE: u32 = 44_100;
-/// Samples per read: one ~60 Hz frame's worth.
-const CHUNK: usize = 735;
-const FFT_IN: usize = 1024;
-const FFT_OUT: usize = 512;
 /// Analyzer columns, before Winamp groups them into 3px bars.
 pub const COLUMNS: usize = 75;
+/// Each bar's centre frequency (Hz): the middle column of each group of four.
+const BANDS: [f64; 19] = [
+    69.0, 194.0, 325.0, 465.0, 619.0, 792.0, 992.0, 1228.0, 1516.0, 1877.0, 2340.0, 2945.0, 3750.0, 4835.0,
+    6312.0, 8339.0, 11136.0, 15011.0, 20397.0,
+];
+/// Band amplitude (linear) → Winamp's column value, per band (see the module docs).
+const SCALE: [f64; 19] = [
+    89.3, 78.1, 105.2, 128.5, 146.8, 165.6, 178.8, 190.2, 201.0, 209.2, 213.7, 213.7, 219.3, 220.4, 220.2, 218.9,
+    216.6, 210.3, 160.3,
+];
+/// A distinct channel name per band, in ffmpeg's own channel order after the music's FL and FR:
+/// `amerge` sorts named channels into that order, so this keeps band i on channel i + 3. Identical
+/// (unnamed mono) bands work too, but make ffmpeg warn that the layouts overlap.
+const BAND_CHANNELS: [&str; 19] =
+    ["FC", "LFE", "BL", "BR", "FLC", "FRC", "BC", "SL", "SR", "TC", "TFL", "TFC", "TFR", "TBL", "TBC", "TBR", "DL", "DR", "WL"];
+const LABEL: &str = "viz";
+/// mpv's audio output buffer (its `audio-buffer` default): how far the levels run ahead.
+const LEAD: Duration = Duration::from_millis(200);
+const FRAME: Duration = Duration::from_millis(16);
+/// No new levels for this long: nothing's playing (paused, between tracks).
+const STALE: Duration = Duration::from_millis(150);
+const WAVE_LEN: usize = 1024;
+const WAVE_RATE: f64 = 44_100.0;
 
-static RUNNING: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+/// Winamp's EQ band frequencies (Hz).
+const EQ_BANDS: [f64; 10] = [60.0, 170.0, 310.0, 600.0, 1000.0, 3000.0, 6000.0, 12000.0, 14000.0, 16000.0];
+/// A slider's full travel either way, as in Winamp.
+const EQ_RANGE_DB: f64 = 12.0;
+/// How often the EQ is sent again: a crossfade's second deck copies the chain as first built, not
+/// the live values, so it's put right within this long.
+const EQ_RESEND: Duration = Duration::from_millis(500);
 
-/// Start capturing, if not already. Never fails loudly: no audio server just means no bars.
+/// The EQ window's state, as the UI keeps it (uiState.eq, winamp.json's `eq`): sliders 0-100, 50
+/// for 0 dB, 100 for +12.
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct Eq {
+    pub on: bool,
+    pub preamp: f64,
+    pub bands: Vec<f64>,
+}
+
+impl Default for Eq {
+    fn default() -> Self {
+        Eq { on: true, preamp: 50.0, bands: vec![50.0; 10] }
+    }
+}
+
+impl Eq {
+    fn db(slider: f64) -> f64 {
+        ((slider.clamp(0.0, 100.0) - 50.0) / 50.0) * EQ_RANGE_DB
+    }
+    /// Preamp as a linear factor (1 when off), and each band's gain in dB (0 when off).
+    fn gains(&self) -> (f64, Vec<f64>) {
+        if !self.on {
+            return (1.0, vec![0.0; EQ_BANDS.len()]);
+        }
+        let bands = (0..EQ_BANDS.len()).map(|i| Self::db(self.bands.get(i).copied().unwrap_or(50.0))).collect();
+        (10f64.powf(Self::db(self.preamp) / 20.0), bands)
+    }
+}
+
+/// The filters went into the chain: from the first Winamp window of the session to its end.
+static INSTALLED: AtomicBool = AtomicBool::new(false);
+/// The Winamp window is open: the analyzer data is read and sent only then.
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+static EQ: Mutex<Option<Eq>> = Mutex::new(None);
+/// The last retune failed (nothing playing yet: mpv has no audio chain to command). Logged once
+/// when it starts failing, not on every resend.
+static EQ_FAILING: AtomicBool = AtomicBool::new(false);
+
+/// The Winamp window opened. The first time, the filters go into the player's chain (with the
+/// remembered EQ) and the thread that drives them starts; they stay for the rest of the session.
+/// Never fails loudly: no filters just means no EQ and no levels.
 pub fn start(app: &AppHandle) {
-    let mut running = RUNNING.lock().unwrap();
-    if running.is_some() {
+    ACTIVE.store(true, Ordering::SeqCst);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let stop = Arc::new(AtomicBool::new(false));
-    *running = Some(stop.clone());
-    let app = app.clone();
-    let _ = std::thread::Builder::new().name("winamp-viz".into()).spawn(move || {
-        if let Err(e) = capture(&app, &stop) {
-            tracing::warn!(error = %e, "winamp viz: no spectrum (audio capture unavailable)");
+    let eq = {
+        let mut eq = EQ.lock().unwrap();
+        if eq.is_none() {
+            *eq = crate::winamp::ui_prefs(app).get("eq").and_then(|v| serde_json::from_value(v.clone()).ok());
         }
-    });
-}
-
-pub fn stop() {
-    if let Some(stop) = RUNNING.lock().unwrap().take() {
-        stop.store(true, Ordering::SeqCst);
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn capture(app: &AppHandle, stop: &AtomicBool) -> Result<(), String> {
-    use libpulse_binding::def::BufferAttr;
-    use libpulse_binding::sample::{Format, Spec};
-    use libpulse_binding::stream::Direction;
-    use libpulse_simple_binding::Simple;
-    use tauri::{Emitter, Manager};
-
-    let spec = Spec { format: Format::F32le, channels: 1, rate: RATE };
-    // Small fragments so a read returns about one frame's worth instead of a big buffer.
-    let attr = BufferAttr {
-        maxlength: u32::MAX,
-        tlength: u32::MAX,
-        prebuf: u32::MAX,
-        minreq: u32::MAX,
-        fragsize: (CHUNK * 4) as u32,
+        eq.clone().unwrap_or_default()
     };
-    let pa = Simple::new(
-        None,
-        "ytminamp",
-        Direction::Record,
-        Some("@DEFAULT_MONITOR@"),
-        "Winamp visualizer",
-        &spec,
-        None,
-        Some(&attr),
-    )
-    .map_err(|e| format!("{e:?}"))?;
+    let state = app.state::<Arc<crate::state::AppState>>();
+    if let Err(e) = state.player.set_extra_af(Some(&format!("{},{}", eq_filter(&eq), filter()))) {
+        tracing::warn!(error = %e, "winamp: mpv refused the EQ/analysis filters, no EQ or spectrum");
+        return;
+    }
+    let app = app.clone();
+    let _ = std::thread::Builder::new().name("winamp-viz".into()).spawn(move || run(&app));
+}
 
-    let fft = Fft::new();
-    let mut window = vec![0f32; FFT_IN];
-    let mut bytes = vec![0u8; CHUNK * 4];
-    while !stop.load(Ordering::SeqCst) {
-        pa.read(&mut bytes).map_err(|e| format!("{e:?}"))?;
-        window.copy_within(CHUNK.., 0);
-        for (dst, src) in window[FFT_IN - CHUNK..].iter_mut().zip(bytes.chunks_exact(4)) {
-            *dst = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+/// The Winamp window closed: stop reading the analyzer. The filters, EQ included, stay.
+pub fn stop(_app: &AppHandle) {
+    ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// The EQ window changed: remember it, and retune the filter if it's in.
+pub fn set_eq(app: &AppHandle, eq: Eq) {
+    *EQ.lock().unwrap() = Some(eq.clone());
+    if INSTALLED.load(Ordering::SeqCst) {
+        apply_eq(app, &eq);
+    }
+}
+
+fn apply_eq(app: &AppHandle, eq: &Eq) {
+    let player = &app.state::<Arc<crate::state::AppState>>().player;
+    let (preamp, bands) = eq.gains();
+    let mut result = player.af_command("eq", "volume", &format!("{preamp:.4}"), "volume@pre");
+    for (i, g) in bands.iter().enumerate() {
+        result = result.and(player.af_command("eq", "g", &format!("{g:.2}"), &format!("equalizer@b{i}")));
+    }
+    match result {
+        Err(e) if !EQ_FAILING.swap(true, Ordering::Relaxed) => {
+            tracing::debug!(error = %e, "winamp eq: retune failed (nothing playing yet?); quiet until it works again")
         }
-        let _ = app.emit_to(crate::winamp::LABEL, EVENT, fft.columns(&window));
+        Err(_) => {}
+        Ok(()) => EQ_FAILING.store(false, Ordering::Relaxed),
+    }
+}
+
+/// The equalizer, in mpv's `af` syntax: the preamp, then a one-octave peaking filter per band.
+fn eq_filter(eq: &Eq) -> String {
+    let (preamp, bands) = eq.gains();
+    let mut parts = vec![format!("volume@pre=volume={preamp:.4}")];
+    for (i, (f, g)) in EQ_BANDS.iter().zip(bands).enumerate() {
+        parts.push(format!("equalizer@b{i}=f={f}:t=o:w=1:g={g:.2}"));
+    }
+    format!("@eq:lavfi=[{}]", parts.join(","))
+}
+
+/// The analysis filter, in mpv's `af` syntax.
+fn filter() -> String {
+    let n = BANDS.len();
+    let labels: String = (0..n).map(|i| format!("[b{i}]")).collect();
+    let mut parts = vec![
+        "aformat=channel_layouts=stereo,asplit=2[m][x]".to_string(),
+        format!("[x]aformat=channel_layouts=mono,asplit={n}{labels}"),
+    ];
+    for (i, (f, w)) in BANDS.iter().zip(widths()).enumerate() {
+        parts.push(format!("[b{i}]bandpass=f={f}:t=o:w={w:.2},pan={}|c0=c0[o{i}]", BAND_CHANNELS[i]));
+    }
+    let outs: String = (0..n).map(|i| format!("[o{i}]")).collect();
+    // The music's layout pinned where amerge meets it, or amerge asks before it's settled (and
+    // warns "No channel layout for input 1").
+    parts.push("[m]aformat=channel_layouts=stereo[ms]".to_string());
+    parts.push(format!(
+        "[ms]{outs}amerge=inputs={},astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,\
+         pan=stereo|c0=c0|c1=c1",
+        n + 1
+    ));
+    format!("@{LABEL}:lavfi=[{}]", parts.join(";"))
+}
+
+/// Each band's width in octaves: halfway to its neighbours either side, at least a third.
+fn widths() -> Vec<f64> {
+    (0..BANDS.len())
+        .map(|i| {
+            let lo = if i > 0 { BANDS[i - 1] } else { BANDS[0] / 2.0 };
+            let hi = BANDS.get(i + 1).copied().unwrap_or((BANDS[i] * 1.3).min(22_000.0));
+            ((hi / lo).log2() / 2.0).max(0.3)
+        })
+        .collect()
+}
+
+/// Band levels (dBFS, None for silence) from `af-metadata/viz`: channels 1 and 2 are the music,
+/// 3.. the bands.
+fn levels(metadata: &str) -> Option<Vec<Option<f64>>> {
+    let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(metadata).ok()?;
+    let band = |i: usize| {
+        let v = map.get(&format!("lavfi.astats.{}.RMS_level", i + 3))?;
+        v.as_str()?.parse::<f64>().ok().filter(|db| db.is_finite())
+    };
+    map.contains_key("lavfi.astats.3.RMS_level").then(|| (0..BANDS.len()).map(band).collect())
+}
+
+/// Band levels → the 75 columns Winamp draws, each bar's four columns alike.
+fn columns(levels: &[Option<f64>]) -> Vec<f32> {
+    (0..COLUMNS)
+        .map(|x| {
+            let band = x / 4;
+            levels[band].map_or(0.0, |db| (SCALE[band] * 10f64.powf(db / 20.0)) as f32)
+        })
+        .collect()
+}
+
+/// A waveform with a tone per band at the band's level, its phases carried on between frames so
+/// the shape keeps moving.
+fn wave(levels: &[Option<f64>], phases: &mut [f64], elapsed: f64) -> Vec<u8> {
+    let amps: Vec<f64> = levels.iter().map(|l| l.map_or(0.0, |db| 10f64.powf(db / 20.0))).collect();
+    let out = (0..WAVE_LEN)
+        .map(|n| {
+            let t = n as f64 / WAVE_RATE;
+            let s: f64 = BANDS
+                .iter()
+                .zip(&amps)
+                .zip(phases.iter())
+                .map(|((f, a), p)| a * (p + std::f64::consts::TAU * f * t).sin())
+                .sum();
+            // Bands at -20 dB sum to about full scale; quieter music gets a smaller wave.
+            (128.0 + (s * 1.5).clamp(-1.0, 1.0) * 127.0) as u8
+        })
+        .collect();
+    for (p, f) in phases.iter_mut().zip(BANDS) {
+        *p = (*p + std::f64::consts::TAU * f * elapsed) % std::f64::consts::TAU;
+    }
+    out
+}
+
+fn run(app: &AppHandle) {
+    let state = app.state::<Arc<crate::state::AppState>>();
+    let silence = vec![None; BANDS.len()];
+    // Readings waiting out the output buffer's lead.
+    let mut queue: VecDeque<(Instant, Vec<Option<f64>>)> = VecDeque::new();
+    let mut last_raw = String::new();
+    let mut last_change = Instant::now();
+    let mut shown = silence.clone();
+    let mut phases = vec![0.0; BANDS.len()];
+    let mut last_frame = Instant::now();
+    let mut last_eq = Instant::now();
+    loop {
+        std::thread::sleep(FRAME);
+        let now = Instant::now();
+        if now.duration_since(last_eq) >= EQ_RESEND {
+            last_eq = now;
+            if let Some(eq) = EQ.lock().unwrap().clone() {
+                apply_eq(app, &eq);
+            }
+        }
+        if !ACTIVE.load(Ordering::SeqCst) {
+            queue.clear();
+            last_raw.clear();
+            continue;
+        }
+        let raw = state.player.af_metadata(LABEL).unwrap_or_default();
+        if raw != last_raw {
+            last_change = now;
+            if let Some(l) = levels(&raw) {
+                queue.push_back((now, l));
+            }
+            last_raw = raw;
+        }
+        while queue.front().is_some_and(|(at, _)| now.duration_since(*at) >= LEAD) {
+            shown = queue.pop_front().unwrap().1;
+        }
+        // Nothing new for a while: playback stopped, so the bars drop.
+        if now.duration_since(last_change) > STALE + LEAD {
+            shown.clone_from(&silence);
+            queue.clear();
+        }
+        let _ = app.emit_to(crate::winamp::LABEL, EVENT, columns(&shown));
         if app.get_webview_window(MILKDROP).is_some() {
-            let wave: Vec<u8> = window.iter().map(|s| (s.clamp(-1.0, 1.0) * 127.0 + 128.0) as u8).collect();
-            let _ = app.emit_to(MILKDROP, WAVE_EVENT, wave);
+            let elapsed = now.duration_since(last_frame).as_secs_f64();
+            let _ = app.emit_to(MILKDROP, WAVE_EVENT, wave(&shown, &mut phases, elapsed));
         }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn capture(_app: &AppHandle, _stop: &AtomicBool) -> Result<(), String> {
-    Err("audio capture is only implemented on Linux".into())
-}
-
-/// Nullsoft vis_classic's FFT (via Webamp's `FFTNullsoft.ts`): sine envelope, radix-2 FFT,
-/// magnitude equalized on a log10 curve. 1024 samples in, 512 bins out.
-struct Fft {
-    bitrev: Vec<usize>,
-    envelope: Vec<f32>,
-    equalize: Vec<f32>,
-    cossin: Vec<(f32, f32)>,
-}
-
-impl Fft {
-    fn new() -> Self {
-        let n = FFT_IN;
-        let mut bitrev: Vec<usize> = (0..n).collect();
-        let mut j = 0;
-        for i in 0..n {
-            if j > i {
-                bitrev.swap(i, j);
-            }
-            let mut m = n >> 1;
-            while m >= 1 && j >= m {
-                j -= m;
-                m >>= 1;
-            }
-            j += m;
-        }
-
-        let mult = std::f32::consts::TAU / n as f32;
-        let envelope =
-            (0..n).map(|i| 0.5 + 0.5 * (i as f32 * mult - std::f32::consts::FRAC_PI_2).sin()).collect();
-
-        let mut bias = 0.04f32;
-        let equalize = (0..FFT_OUT)
-            .map(|i| {
-                let inv_half = (9.0 - bias) / FFT_OUT as f32;
-                let v = (1.0 + bias + (i as f32 + 1.0) * inv_half).log10();
-                bias /= 1.0025;
-                v
-            })
-            .collect();
-
-        let mut cossin = Vec::new();
-        let mut size = 2;
-        while size <= n {
-            let theta = -std::f32::consts::TAU / size as f32;
-            cossin.push((theta.cos(), theta.sin()));
-            size <<= 1;
-        }
-
-        Fft { bitrev, envelope, equalize, cossin }
-    }
-
-    /// Samples in [-1, 1] → the 75 analyzer columns Winamp draws (before falloff).
-    fn columns(&self, wave: &[f32]) -> Vec<f32> {
-        // Webamp feeds the FFT AnalyserNode bytes as (b - 128) / 24, i.e. sample * 128/24.
-        const INPUT_SCALE: f32 = 128.0 / 24.0;
-        let n = FFT_IN;
-        let mut re: Vec<f32> =
-            (0..n).map(|i| wave[self.bitrev[i]] * INPUT_SCALE * self.envelope[self.bitrev[i]]).collect();
-        let mut im = vec![0f32; n];
-
-        let mut size = 2;
-        let mut t = 0;
-        while size <= n {
-            let (wpr, wpi) = self.cossin[t];
-            let (mut wr, mut wi) = (1f32, 0f32);
-            let half = size >> 1;
-            for m in 0..half {
-                let mut i = m;
-                while i < n {
-                    let j = i + half;
-                    let tr = wr * re[j] - wi * im[j];
-                    let ti = wr * im[j] + wi * re[j];
-                    re[j] = re[i] - tr;
-                    im[j] = im[i] - ti;
-                    re[i] += tr;
-                    im[i] += ti;
-                    i += size;
-                }
-                let wtemp = wr;
-                wr = wr * wpr - wi * wpi;
-                wi = wi * wpr + wtemp * wpi;
-            }
-            size <<= 1;
-            t += 1;
-        }
-
-        let spectrum: Vec<f32> =
-            (0..FFT_OUT).map(|i| (re[i] * re[i] + im[i] * im[i]).sqrt() * self.equalize[i]).collect();
-
-        // Webamp's mapping: mostly-logarithmic (scale 0.91) interpolation of 512 bins onto 75.
-        const SCALE: f32 = 0.91;
-        let log_max = (FFT_OUT as f32).log10();
-        (0..COLUMNS)
-            .map(|x| {
-                let t = x as f32 / (COLUMNS - 1) as f32;
-                let linear = t * (FFT_OUT - 1) as f32;
-                let log = 10f32.powf(log_max * t);
-                let idx = (1.0 - SCALE) * linear + SCALE * log;
-                let i1 = (idx.floor() as usize).min(FFT_OUT - 1);
-                let i2 = (idx.ceil() as usize).min(FFT_OUT - 1);
-                if i1 == i2 {
-                    spectrum[i1]
-                } else {
-                    let f2 = idx - i1 as f32;
-                    (1.0 - f2) * spectrum[i1] + f2 * spectrum[i2]
-                }
-            })
-            .collect()
+        last_frame = now;
     }
 }
 
@@ -221,20 +309,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn silence_gives_flat_zero_columns() {
-        let cols = Fft::new().columns(&vec![0.0; FFT_IN]);
-        assert_eq!(cols.len(), COLUMNS);
-        assert!(cols.iter().all(|&c| c == 0.0));
+    fn filter_measures_one_channel_per_band_and_keeps_the_music_stereo() {
+        let f = filter();
+        assert!(f.starts_with("@viz:lavfi=["));
+        assert_eq!(f.matches("bandpass=").count(), BANDS.len());
+        assert!(f.contains(&format!("amerge=inputs={}", BANDS.len() + 1)));
+        assert!(f.ends_with("pan=stereo|c0=c0|c1=c1]"));
+        assert_eq!(f.matches("|c0=c0[o").count(), BANDS.len(), "every band gets its own channel name");
     }
 
     #[test]
-    fn a_low_tone_lights_the_low_columns_more_than_the_high_ones() {
-        let wave: Vec<f32> = (0..FFT_IN)
-            .map(|i| (i as f32 * 200.0 * std::f32::consts::TAU / RATE as f32).sin() * 0.5)
-            .collect();
-        let cols = Fft::new().columns(&wave);
-        let low: f32 = cols[..20].iter().sum();
-        let high: f32 = cols[55..].iter().sum();
-        assert!(low > high * 4.0, "low={low} high={high}");
+    fn band_levels_come_from_channels_three_on() {
+        let meta = r#"{"lavfi.astats.1.RMS_level":"-20.0","lavfi.astats.2.RMS_level":"-20.0","lavfi.astats.3.RMS_level":"-30.5","lavfi.astats.4.RMS_level":"-inf"}"#;
+        let l = levels(meta).unwrap();
+        assert_eq!(l.len(), BANDS.len());
+        assert_eq!(l[0], Some(-30.5));
+        assert_eq!(l[1], None, "-inf is silence");
+        assert!(levels("{}").is_none());
+        assert!(levels("not json").is_none());
+    }
+
+    #[test]
+    fn a_band_lights_its_own_bar_only() {
+        let mut l = vec![None; BANDS.len()];
+        l[2] = Some(-20.0);
+        let cols = columns(&l);
+        assert_eq!(cols.len(), COLUMNS);
+        assert!(cols[8..12].iter().all(|&c| c > 1.0));
+        assert!(cols.iter().enumerate().all(|(i, &c)| (8..12).contains(&i) || c == 0.0));
+    }
+
+    #[test]
+    fn eq_sliders_map_to_plus_minus_twelve_db_and_off_is_flat() {
+        let mut eq = Eq { on: true, preamp: 100.0, bands: vec![50.0; 10] };
+        eq.bands[0] = 100.0;
+        eq.bands[9] = 0.0;
+        let (pre, bands) = eq.gains();
+        assert!((pre - 10f64.powf(12.0 / 20.0)).abs() < 1e-9);
+        assert_eq!((bands[0], bands[5], bands[9]), (12.0, 0.0, -12.0));
+        eq.on = false;
+        assert_eq!(eq.gains(), (1.0, vec![0.0; 10]));
+        let f = eq_filter(&Eq::default());
+        assert!(f.starts_with("@eq:lavfi=[volume@pre=volume=1.0000,equalizer@b0=f=60:t=o:w=1:g=0.00"));
+        assert_eq!(f.matches("equalizer@b").count(), 10);
+    }
+
+    /// `cargo test -p limusic-app print_filters -- --ignored --nocapture`: the chain as mpv gets
+    /// it, to try by hand (`mpv --af='...' file`).
+    #[test]
+    #[ignore]
+    fn print_filters() {
+        println!("{},{}", eq_filter(&Eq::default()), filter());
+    }
+
+    #[test]
+    fn silence_is_a_flat_wave() {
+        let mut phases = vec![0.0; BANDS.len()];
+        assert!(wave(&vec![None; BANDS.len()], &mut phases, 0.016).iter().all(|&b| b == 128));
     }
 }

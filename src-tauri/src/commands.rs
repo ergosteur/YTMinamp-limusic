@@ -914,6 +914,13 @@ pub async fn set_winamp_prefs(
     crate::winamp::merge_ui_prefs(&app, patch)
 }
 
+/// The EQ window changed: retune the equalizer filter (viz.rs). Remembering it is the UI's job.
+#[tauri::command]
+pub async fn set_winamp_eq(app: tauri::AppHandle, eq: crate::viz::Eq) -> Result<(), String> {
+    crate::viz::set_eq(&app, eq);
+    Ok(())
+}
+
 /// The clutterbar's A: keep every Winamp window above others (remembered).
 #[tauri::command]
 pub async fn set_winamp_always_on_top(app: tauri::AppHandle, on: bool) -> Result<(), String> {

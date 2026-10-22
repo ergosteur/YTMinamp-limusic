@@ -1052,6 +1052,7 @@ pub fn run() {
             commands::winamp_prefs,
             commands::set_winamp_prefs,
             commands::set_winamp_always_on_top,
+            commands::set_winamp_eq,
             commands::open_winamp_panel,
             commands::close_winamp_panel,
             commands::resize_winamp_panel,

@@ -1,6 +1,6 @@
 // The equalizer window, drawn from eqmain.bmp: ON/AUTO, presets, preamp and ten bands, and the
-// response curve. It looks and moves like Winamp's but changes nothing you hear (there's no EQ
-// filter in the player yet), like the balance slider. Coordinates: Webamp's skinSprites.ts
+// response curve. What it sets is applied by src-tauri/src/viz.rs's `@eq` filter (AUTO is still
+// only remembered, not acted on). Coordinates: Webamp's skinSprites.ts
 // EQMAIN, equalizer-window.css and EqualizerWindow/Band.tsx + EqGraph.tsx.
 
 import { isLit } from '../focus.js';
