@@ -12,7 +12,9 @@
     "winamp-eq",
     "winamp-lyrics",
     "winamp-url",
-    "winamp-milkdrop"
+    "winamp-milkdrop",
+    "winamp-eqsave",
+    "winamp-fileinfo"
   ],
   "permissions": [
     "core:default",
@@ -21,6 +23,8 @@
     "process:default",
     "core:window:allow-show",
     "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
     "core:window:allow-toggle-maximize",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-close",

@@ -33,6 +33,12 @@ export const uiState = {
 	vizColumns: /** @type {number[] | null} */ (null),
 	/** When they came (`performance.now()`): stale columns mean no live feed (testPattern.js). */
 	vizAt: 0,
+	/** Open the app in Winamp mode rather than the full window (main menu; winamp.rs `start_in_winamp`). */
+	startInWinamp: false,
+	/** Scroll a song title too long for its box (the title's right-click menu); off: cut it short. */
+	marqueeScroll: true,
+	/** Open MilkDrop whenever the Winamp window opens (the analyzer's right-click menu). */
+	milkdropOnStart: false,
 	/** The MilkDrop window (Butterchurn) is open. */
 	milkdrop: false,
 	/** Shown in place of the title until `marqueeMessageUntil` (performance.now() ms). */
@@ -74,6 +80,8 @@ export const uiState = {
 		open: false,
 		/** Floating until moved: it isn't one of classic Winamp's docked windows. */
 		dock: /** @type {import('./uiState.js').ArtDock} */ ('float'),
+		/** The album name shown under the picture (its right-click menu; remembered as artCaption). */
+		caption: false,
 		/** Which frame the skin gets: gen.bmp, or the EQ-window fallback. Set on skin load. */
 		frame: /** @type {import('./render/albumArt.js').ArtFrame} */ ('gen'),
 		closePressed: false
@@ -82,7 +90,9 @@ export const uiState = {
 		...panelState(),
 		/** The query the current `results` are for; Enter re-runs only when the box differs. */
 		searchedFor: '',
-		results: /** @type {import('$lib/api').SongItem[]} */ ([]),
+		/** What to search for (the button in the box; searchKinds.js), remembered as searchKind. */
+		kind: /** @type {import('./searchKinds.js').SearchKind} */ ('songs'),
+		results: /** @type {import('./searchKinds.js').SearchRow[]} */ ([]),
 		/** "Searching...", "No results", an error; '' when the results speak for themselves. */
 		status: ''
 	}
@@ -96,7 +106,11 @@ function panelState() {
 		dock: /** @type {'stack' | 'float'} */ ('stack'),
 		/** Index of the first visible row. */
 		scroll: 0,
+		/** The row the keyboard moves and Enter plays. */
 		selected: /** @type {number | null} */ (null),
+		/** Every highlighted row (Ctrl/Shift+click, selection.js), and where a Shift range starts. */
+		marked: /** @type {Set<number>} */ (new Set()),
+		anchor: /** @type {number | null} */ (null),
 		pressed: /** @type {string | null} */ (null),
 		draggingScroll: false
 	};

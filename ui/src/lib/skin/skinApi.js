@@ -5,8 +5,16 @@
 import { emit, emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as api from '$lib/api';
-import { playback } from '$lib/player.svelte';
+import {
+	commitVolume as limusicCommitVolume,
+	dragVolume,
+	nudgeVolume as limusicNudgeVolume,
+	playback
+} from '$lib/player.svelte';
 import { uiState } from './uiState.js';
+import { selectNone, selectOnly, trimSelection } from './selection.js';
+import { activePart } from './focus.js';
+import { playRow, searchRows, songsIn } from './searchKinds.js';
 import { PL_H, PL_W, VISIBLE_ROWS, listRows, maxScroll } from './render/playlist.js';
 import { LYRICS_W, dockedLayout } from './layout.js';
 import { EQ_H, EQ_W } from './render/equalizer.js';
@@ -74,7 +82,9 @@ export function seekTo(positionSecs) {
 
 /** @param {number} volume 0-100 */
 export function setVolume(volume) {
-	return api.setVolume(volume);
+	// Limusic's own drag path: live, and saved once the gesture ends (commitVolume).
+	dragVolume(volume);
+	return Promise.resolve();
 }
 
 /**
@@ -101,11 +111,16 @@ export function seekBy(secs) {
 	api.seek(Math.max(0, playback.position + secs)).catch(log('seek'));
 }
 
-/** Volume up or down by `step`%, shown in the title (the arrow keys, the wheel). @param {number} step */
+/** Volume up or down by `step`%, shown in the title (the arrow keys, the wheel). Limusic's own
+ * nudge, so it's saved for next time once the steps stop. @param {number} step */
 export function nudgeVolume(step) {
-	const volume = Math.max(0, Math.min(100, Math.round(playback.volume) + step));
-	api.setVolume(volume).catch(log('volume'));
-	flashMarquee(`Volume: ${volume}%`);
+	limusicNudgeVolume(step);
+	flashMarquee(`Volume: ${Math.round(playback.volume)}%`);
+}
+
+/** The end of a volume drag or click: the level to reopen at next time. @param {number} volume */
+export function commitVolume(volume) {
+	limusicCommitVolume(volume);
 }
 
 export function nextTrack() {
@@ -191,7 +206,7 @@ export function setPanelOpen(kind, open, dock) {
 			const current = playback.queue.currentIndex;
 			const centred = current - Math.floor(VISIBLE_ROWS / 2);
 			uiState.pl.scroll = Math.max(0, Math.min(maxScroll(playback.queue.items.length), centred));
-			uiState.pl.selected = null;
+			selectNone(uiState.pl);
 		} else if (kind === 'search') {
 			// After the render loop has shown and placed the box.
 			requestAnimationFrame(() => requestAnimationFrame(focusSearch));
@@ -228,12 +243,13 @@ const ART_FLOAT_WIDTH = 220;
  * @param {import('./uiState.js').ArtDock} [dock]
  */
 export function setArt(open, dock = uiState.art.dock) {
-	// The right side belongs to docked lyrics while they're there.
-	if (dock === 'right' && lyricsOnRight()) dock = 'float';
+	// The right side belongs to docked lyrics while they're there: the stack instead (a floating
+	// window's double-click asks for the right, and must still dock).
+	if (dock === 'right' && lyricsOnRight()) dock = 'stack';
 	const was = uiState.art.open && uiState.art.dock === 'float';
 	uiState.art.open = open;
 	uiState.art.dock = dock;
-	syncFloating('art', was, open && dock === 'float', () => artSize(uiState.art.frame, { width: ART_FLOAT_WIDTH }));
+	syncFloating('art', was, open && dock === 'float', () => artSize(uiState.art.frame, { width: ART_FLOAT_WIDTH }, uiState.art.caption));
 	savePlacement('art');
 	resizeToLayout();
 }
@@ -311,6 +327,12 @@ export async function restorePrefs() {
 	uiState.visMode = pref('visMode', 'analyzer');
 	Object.assign(uiState.eq, pref('eq', {}));
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
+	uiState.startInWinamp = pref('startInWinamp', false);
+	uiState.art.caption = pref('artCaption', false);
+	uiState.search.kind = pref('searchKind', 'songs');
+	uiState.marqueeScroll = pref('marqueeScroll', true);
+	uiState.milkdropOnStart = pref('milkdropOnStart', false);
+	if (uiState.milkdropOnStart && !uiState.milkdrop) toggleMilkdrop();
 	uiState.lyrics.width = pref('lyricsWidth', LYRICS_W);
 	// Remembered from a bigger screen, perhaps: only if it fits this one (not saved, so it's back
 	// on the bigger screen).
@@ -341,7 +363,7 @@ export function followQueue(visible = VISIBLE_ROWS) {
 	const { items, currentIndex } = playback.queue;
 	const max = maxScroll(items.length, visible);
 	if (view.scroll > max) view.scroll = max;
-	if (view.selected !== null && view.selected >= items.length) view.selected = null;
+	trimSelection(view, items.length);
 
 	const first = items[0]?.video_id;
 	const replaced = first !== followed.first;
@@ -387,6 +409,13 @@ export function requestSearch() {
 	else emitTo('winamp', 'winamp-search-add').catch(() => {});
 }
 
+/** "Always start in Winamp mode": read by Rust's `show_main` at the next launch. */
+export function toggleStartInWinamp() {
+	uiState.startInWinamp = !uiState.startInWinamp;
+	savePref('startInWinamp', uiState.startInWinamp);
+	flashMarquee(`Start in Winamp mode: ${uiState.startInWinamp ? 'On' : 'Off'}`);
+}
+
 /** Open or close the MilkDrop window (MilkdropWindow.svelte), at the size it last had. */
 export function toggleMilkdrop() {
 	if (uiState.milkdrop) {
@@ -400,6 +429,97 @@ export function toggleMilkdrop() {
 		uiState.milkdrop = false;
 		log('open milkdrop')(e);
 	});
+}
+
+/** Where File info's track goes (FileInfoWindow.svelte reads it; localStorage is every window's). */
+export const FILE_INFO_KEY = 'ytminamp-file-info';
+export const FILE_INFO_SIZE = { w: 420, h: 200 };
+
+/** Show `item` in the File info window, opening it if it isn't. @param {import('$lib/api').SongItem} item */
+export function showFileInfo(item) {
+	try {
+		localStorage.setItem(FILE_INFO_KEY, JSON.stringify(item));
+	} catch (e) {
+		return log('file info')(e);
+	}
+	api.openWinampPanel('fileinfo', FILE_INFO_SIZE.w, FILE_INFO_SIZE.h).catch(log('file info'));
+}
+
+/** File info for what's playing (the title's double-click and right-click menu). */
+export function showNowFileInfo() {
+	const item = nowAsItem();
+	if (item) showFileInfo(item);
+	else flashMarquee('Nothing playing');
+}
+
+/** Tells every Winamp window the art's caption went on or off (see `toggleArtCaption`). */
+export const ART_CAPTION_EVENT = 'winamp-art-caption';
+
+/** "Show album name" under the album art (its right-click menu), in every window. */
+export function toggleArtCaption() {
+	const on = !uiState.art.caption;
+	savePref('artCaption', on);
+	emit(ART_CAPTION_EVENT, on).catch(() => {});
+}
+
+/** The caption went on or off (from any window): this window's art follows. @param {boolean} on */
+export function setArtCaption(on) {
+	uiState.art.caption = on;
+	if (getCurrentWindow().label === 'winamp') resizeToLayout();
+}
+
+/** Put the album art somewhere (null: hide it), from the Winamp window or a floating art one. */
+export function placeArt(/** @type {import('./uiState.js').ArtDock | null} */ dock) {
+	if (getCurrentWindow().label === 'winamp') setArt(dock !== null, dock ?? uiState.art.dock);
+	else emitTo('winamp', 'winamp-panel-dock', { kind: 'art', dock }).catch(log('art placement'));
+}
+
+/** "Autoscroll songname" (the title's right-click menu). */
+export function toggleMarqueeScroll() {
+	uiState.marqueeScroll = !uiState.marqueeScroll;
+	savePref('marqueeScroll', uiState.marqueeScroll);
+}
+
+/** "Run the plug-in on start-up" (the analyzer's right-click menu). */
+export function toggleMilkdropOnStart() {
+	uiState.milkdropOnStart = !uiState.milkdropOnStart;
+	savePref('milkdropOnStart', uiState.milkdropOnStart);
+}
+
+/** The playing track, in a playlist row's shape. @returns {import('$lib/api').SongItem | null} */
+export function nowAsItem() {
+	const now = playback.now;
+	if (!now) return null;
+	return {
+		video_id: now.videoId,
+		title: now.title,
+		artists: now.artists,
+		album: now.album ?? undefined,
+		duration: now.duration,
+		thumbnail: now.thumbnail
+	};
+}
+
+/**
+ * Alt+3, Winamp's file info key: the selected row when the playlist or search panel is the active
+ * window (focus.js, the titlebar that's lit) and has one, otherwise what's playing. Run in the
+ * window the key was pressed in: each window has its own selection.
+ */
+export function fileInfoForSelection() {
+	const part = activePart();
+	const pl = uiState.pl.selected;
+	const s = uiState.search.selected;
+	const item =
+		(part === 'playlist' && pl !== null ? playback.queue.items[pl] : null) ??
+		(part === 'search' && s !== null ? uiState.search.results[s] : null) ??
+		nowAsItem();
+	if (item) showFileInfo(item);
+	else flashMarquee('Nothing playing');
+}
+
+/** EQ PRESETS → Save current as preset...: the small naming dialog (EqPresetWindow.svelte). */
+export function openEqPresetDialog() {
+	api.openWinampPanel('eqsave', 275, 70).catch((e) => console.error('open eq preset dialog failed', e));
 }
 
 /** ADD → Open YouTube URL: the small dialog window (OpenUrlWindow.svelte). */
@@ -433,7 +553,7 @@ export function searchKeydown(e, input, size, close) {
 	if (step && s.results.length) {
 		e.preventDefault();
 		const i = Math.max(0, Math.min(s.results.length - 1, (s.selected ?? -1) + step));
-		s.selected = i;
+		selectOnly(s, i);
 		const rows = listRows('search', size).rows;
 		const max = maxScroll(s.results.length, rows);
 		if (i < s.scroll) s.scroll = i;
@@ -459,35 +579,127 @@ export async function runSearch(query) {
 	const q = query.trim();
 	const s = uiState.search;
 	if (!q) return;
+	rememberSearch(q);
 	s.searchedFor = q;
 	s.status = 'Searching...';
 	s.results = [];
 	s.scroll = 0;
-	s.selected = null;
+	selectNone(s);
 	try {
-		const results = await api.search(q, true);
-		if (s.searchedFor !== q) return; // a newer search started meanwhile
+		const kind = s.kind;
+		const results = await searchRows(kind, q);
+		if (s.searchedFor !== q || s.kind !== kind) return; // a newer search started meanwhile
 		s.results = results;
-		s.selected = results.length ? 0 : null;
+		const first = results.findIndex((r) => r.rowKind !== 'header');
+		if (first >= 0) selectOnly(s, first);
 		s.status = results.length ? '' : 'No results';
 	} catch (e) {
 		if (s.searchedFor === q) s.status = `Search failed: ${e}`;
 	}
 }
 
+/** How many recent searches LIST keeps. */
+const SEARCH_HISTORY = 10;
+
+/** Put `q` at the top of the recent searches (LIST), once. @param {string} q */
+function rememberSearch(q) {
+	const recent = /** @type {string[]} */ (pref('searchHistory', []));
+	savePref('searchHistory', [q, ...recent.filter((r) => r.toLowerCase() !== q.toLowerCase())].slice(0, SEARCH_HISTORY));
+}
+
+/** Run `q` again from the recent searches, showing it in the box. @param {string} q */
+export function searchAgain(q) {
+	const input = /** @type {HTMLInputElement | null} */ (document.getElementById(SEARCH_INPUT_ID));
+	if (input) input.value = q;
+	runSearch(q).catch(log('search'));
+}
+
+/** REM: empty the results list. */
+export function clearResults() {
+	const s = uiState.search;
+	s.results = [];
+	s.searchedFor = '';
+	s.status = '';
+	s.scroll = 0;
+	selectNone(s);
+}
+
+/** REM: empty the search box, and put the cursor in it. */
+export function clearSearchBox() {
+	const input = /** @type {HTMLInputElement | null} */ (document.getElementById(SEARCH_INPUT_ID));
+	if (input) input.value = '';
+	focusSearch();
+}
+
+/** "3:24" → 204; unknown sorts last. @param {string | undefined} d */
+function seconds(d) {
+	if (!d) return Infinity;
+	const parts = d.split(':').map(Number);
+	return parts.some(Number.isNaN) ? Infinity : parts.reduce((a, b) => a * 60 + b, 0);
+}
+
+/**
+ * MISC: put the results in a new order. The selection goes: its rows would point elsewhere.
+ * @param {'title' | 'artist' | 'length' | 'reverse'} by
+ */
+export function sortResults(by) {
+	const s = uiState.search;
+	// "All" comes in sections; sorting would scatter them under the wrong headers.
+	if (s.results.some((r) => r.rowKind === 'header')) return flashMarquee("Can't sort sections");
+	const items = [...s.results];
+	if (by === 'reverse') items.reverse();
+	else if (by === 'length') items.sort((a, b) => seconds(a.duration) - seconds(b.duration));
+	else {
+		const text = (/** @type {import('$lib/api').SongItem} */ r) => (by === 'title' ? r.title : (r.artists ?? ''));
+		items.sort((a, b) => text(a).localeCompare(text(b)));
+	}
+	s.results = items;
+	s.scroll = 0;
+	selectNone(s);
+	flashMarquee(by === 'reverse' ? 'Reversed' : `Sorted by ${by}`);
+}
+
 /** Play a search result now; YouTube Music's radio carries on after it, as in Limusic. */
 export function playResult(/** @type {number} */ i) {
-	const item = uiState.search.results[i];
-	return item ? api.play(item) : Promise.resolve();
+	return playRow(uiState.search.results[i]);
+}
+
+/** The button in the search box: search for `kind` now, and from now on. @param {import('./searchKinds.js').SearchKind} kind */
+export function setSearchKind(kind) {
+	const s = uiState.search;
+	s.kind = kind;
+	savePref('searchKind', kind);
+	const input = /** @type {HTMLInputElement | null} */ (document.getElementById(SEARCH_INPUT_ID));
+	const q = input?.value.trim() || s.searchedFor;
+	if (q) runSearch(q).catch(log('search'));
+	focusSearch();
 }
 
 /**
  * @param {number} i
  * @param {boolean} next "Play next" rather than "Add to queue"
  */
-export async function queueResult(i, next) {
-	const item = uiState.search.results[i];
-	if (!item) return;
-	await (next ? api.playNext([item]) : api.addToQueue([item]));
-	flashMarquee(next ? 'Playing next' : 'Added to queue');
+export function queueResult(i, next) {
+	return queueResults([i], next);
+}
+
+/**
+ * Several results at once (the selection), in list order.
+ * @param {number[]} rows @param {boolean} next "Play next" rather than "Add to queue"
+ */
+export async function queueResults(rows, next) {
+	// Albums and playlists bring all their tracks; artists and headers nothing.
+	const items = await songsIn(rows.map((i) => uiState.search.results[i]).filter(Boolean));
+	if (!items.length) return flashMarquee('Nothing to queue');
+	await (next ? api.playNext(items) : api.addToQueue(items));
+	const what = items.length > 1 ? `${items.length} tracks` : '';
+	flashMarquee(next ? `Playing next${what && `: ${what}`}` : `Added to queue${what && `: ${what}`}`);
+}
+
+/** Play the first of several results now and the rest straight after it. @param {number[]} rows */
+export async function playResults(rows) {
+	const [first, ...rest] = rows.filter((i) => uiState.search.results[i]?.rowKind !== 'header');
+	if (first === undefined) return;
+	await playResult(first);
+	if (rest.length) await queueResults(rest, true);
 }

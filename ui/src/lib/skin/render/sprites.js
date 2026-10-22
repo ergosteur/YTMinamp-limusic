@@ -24,7 +24,7 @@ export const CBUTTONS = {
   pauseActive: { x: 46, y: 18, w: 23, h: 18 },
   stop: { x: 69, y: 0, w: 23, h: 18 },
   stopActive: { x: 69, y: 18, w: 23, h: 18 },
-  next: { x: 92, y: 0, w: 23, h: 18 },
+  next: { x: 92, y: 0, w: 22, h: 18 },
   nextActive: { x: 92, y: 18, w: 22, h: 18 },
   eject: { x: 114, y: 0, w: 22, h: 16 },
   ejectActive: { x: 114, y: 16, w: 22, h: 16 },
@@ -139,8 +139,8 @@ export const BALANCE = {
   thumbSelected: { x: 0, y: 422, w: 14, h: 11 },
 };
 
-// Visible height is 13px even though each background frame is 15px tall (Webamp crops 1px off
-// top/bottom — a documented quirk of the original skin format, not a bug).
+// Visible height is 13px even though each background frame is 15px tall: only the top 13 rows are
+// drawn, as in Winamp and Webamp; skins put anything in the last 2 (see drawSlider).
 export const VOLUME_POS = { x: 107, y: 57, w: 68, h: 13 };
 export const BALANCE_POS = { x: 177, y: 57, w: 38, h: 13 };
 export const SLIDER_THUMB_SIZE = { w: 14, h: 11 };
@@ -221,6 +221,8 @@ export function charRect(char) {
 }
 
 export const MARQUEE_POS = { x: 111, y: 24, w: 154, h: 6 };
+/** The Winamp logo, bottom right: click for About (Webamp's main-window.css #about). */
+export const ABOUT_POS = { x: 253, y: 91, w: 13, h: 15 };
 export const MARQUEE_SEPARATOR = "  ***  ";
 export const MARQUEE_STEP_MS = 220;
 

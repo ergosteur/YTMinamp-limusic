@@ -11,7 +11,9 @@
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics } from '../skin/render/lyrics.js';
+	import { drawLyrics, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
+	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { lyricsNow, sungLine } from '../skin/lyrics.js';
 	import { attachKeys, runKey } from '../skin/keys.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
@@ -23,7 +25,9 @@
 	import { attachInput } from '../skin/input.js';
 	import { dockedLayout, hitLayout } from '../skin/layout.js';
 	import {
+		ART_CAPTION_EVENT,
 		LYRICS_ZOOM_EVENT,
+		setArtCaption,
 		SEARCH_INPUT_ID,
 		followQueue,
 		flashMarquee,
@@ -37,7 +41,7 @@
 		setPanelOpen,
 		togglePanel
 	} from '../skin/skinApi.js';
-	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
+	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
 	import { refreshLibrary } from '../skin/playlistActions.js';
 
@@ -55,7 +59,12 @@
 	/** @type {import('$lib/api').SkinPayload['region']} */
 	let region = null;
 	/** @type {import('$lib/api').SkinPayload['pledit']} */
-	let pledit = {};
+	let pledit = $state({});
+	/** The search box's "Songs ▾" button: where (beside the box), and what it says. */
+	let kindAt = $state(/** @type {{ x: number, y: number } | null} */ (null));
+	let kindText = $state('Songs');
+	/** Where the docked lyrics' footer goes (render/lyrics.js keeps the strip), while docked. */
+	let footerRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
 	/** The layout the canvas size/clip were last set for; null = not set yet. */
 	let shapedFor = /** @type {string | null} */ (null);
 
@@ -81,13 +90,15 @@
 		const style = searchInput.style;
 		if (!panel) {
 			style.display = 'none';
+			kindAt = null;
 			return;
 		}
 		style.display = 'block';
 		style.left = `${panel.x + LIST.x}px`;
 		style.top = `${panel.y + LIST.y}px`;
-		style.width = `${LIST.w}px`;
+		style.width = `${LIST.w - KIND_BUTTON_W}px`;
 		style.height = `${SEARCH_INPUT_H - 2}px`;
+		kindAt = { x: panel.x + LIST.x + LIST.w - KIND_BUTTON_W, y: panel.y + LIST.y };
 		style.background = pledit.normalBg ?? '#000000';
 		style.color = pledit.normal ?? '#00ff00';
 		style.borderColor = pledit.normal ?? '#00ff00';
@@ -144,11 +155,21 @@
 					? showMainMenu((path) => applySkin(selectSkin(path)), at)
 					: target.kind === 'result'
 						? showResultMenu(target.index, at)
+						: target.kind === 'queueRow'
+							? showQueueRowMenu(target.index, at)
+							: target.kind === 'art'
+								? showArtMenu(at)
+								: target.kind === 'title'
+									? showTitleMenu(at)
+								: target.kind === 'vis'
+									? showVisMenu(at)
 						: target.kind === 'presets'
 							? showPresetsMenu(at)
 							: target.kind === 'lyrics'
 								? showLyricsMenu(at)
-								: showPlaylistMenu(target.kind, at);
+								: target.kind.startsWith('search-')
+									? showSearchMenu(/** @type {any} */ (target.kind), at)
+								: showPlaylistMenu(/** @type {import('../skin/render/playlist.js').PlaylistButton} */ (target.kind), at);
 				shown.catch((e) => console.error('menu failed', e));
 			},
 			closePanel: (kind) => (kind === 'art' ? setArt(false) : setPanelOpen(kind, false)),
@@ -196,14 +217,15 @@
 		const unlistenKey = listen('winamp-key', (e) => runKey(/** @type {import('../skin/keys.js').KeyAction} */ (e.payload)));
 		// The lyrics' size, changed with Ctrl+wheel over a floating lyrics window.
 		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
+		const unlistenCaption = listen(ART_CAPTION_EVENT, (e) => setArtCaption(/** @type {boolean} */ (e.payload)));
 		const detachKeys = attachKeys();
 		// A floating playlist's ADD, and the messages floating panels show in this marquee.
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
 		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop'} */ (e.payload);
-			// The Open URL dialog: nothing here tracks it.
-			if (kind === 'url') return;
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo'} */ (e.payload);
+			// The Open URL, save-preset and file info windows: nothing here tracks them.
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
 			if (view.dock === 'float') view.open = false;
@@ -266,9 +288,14 @@
 			ctx.restore();
 			followQueue();
 			const searchPanel = layout.panels.find((p) => p.kind === 'search');
+			if (kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
+			const lyricsPanel = layout.panels.find((p) => p.kind === 'lyrics');
+			const r = lyricsPanel ? lyricsFooterRect(sprites, lyricsPanel) : null;
+			if (r?.x !== footerRect?.x || r?.y !== footerRect?.y || r?.w !== footerRect?.w) footerRect = r;
 			for (const panel of layout.panels) {
 				if (panel.kind === 'art') {
-					drawAlbumArt(ctx, sprites, coverFor(playback.now?.thumbnail), panel, uiState.art.closePressed);
+					const caption = uiState.art.caption ? { text: playback.now?.album ?? '', pledit } : null;
+					drawAlbumArt(ctx, sprites, coverFor(playback.now?.thumbnail), panel, uiState.art.closePressed, caption);
 					continue;
 				}
 				if (panel.kind === 'lyrics') {
@@ -298,6 +325,7 @@
 			unlistenClosed.then((f) => f());
 			unlistenKey.then((f) => f());
 			unlistenZoom.then((f) => f());
+			unlistenCaption.then((f) => f());
 			detachKeys();
 		};
 	});
@@ -316,6 +344,28 @@
 		autocomplete="off"
 		onkeydown={onSearchKey}
 	/>
+	{#if kindAt}
+		<button
+			type="button"
+			class="absolute m-0 border px-1 py-0 text-left text-[11px] leading-none outline-none"
+			style:left="{kindAt.x}px"
+			style:top="{kindAt.y}px"
+			style:width="{KIND_BUTTON_W}px"
+			style:height="{SEARCH_INPUT_H - 2}px"
+			style:background={pledit.normalBg ?? '#000000'}
+			style:color={pledit.current ?? '#ffffff'}
+			style:border-color={pledit.normal ?? '#00ff00'}
+			style:font-family={`${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`}
+			title="What to search for"
+			onclick={(e) => {
+				const r = e.currentTarget.getBoundingClientRect();
+				showSearchKindMenu({ x: r.left, y: r.bottom }).catch((err) => console.error('menu failed', err));
+			}}>{kindText} ▾</button
+		>
+	{/if}
+	{#if footerRect}
+		<WinampLyricsFooter rect={footerRect} {pledit} />
+	{/if}
 	{#if status}
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-white">
 			{status}

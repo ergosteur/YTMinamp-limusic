@@ -1,27 +1,45 @@
-// What the playlist editor's bottom buttons do (REM, MISC, LIST to load a playlist, and SEL —
-// with no selection to work on here — to save the queue as one),
-// on Limusic's real queue. Only the upcoming tracks can move or go: the playing row and the ones
+// What the playlist editor's bottom buttons do (REM, MISC, and LIST to load a playlist or save
+// the queue as one) on Limusic's real queue. Only the upcoming tracks can move or go: the playing row and the ones
 // before it stay put, the same rule Limusic's own queue panel follows.
 import * as api from '$lib/api';
 import { playFrom, playback } from '$lib/player.svelte';
 import { parseYtLink } from '$lib/ytlink';
 import { flashMarquee } from './skinApi.js';
 import { uiState } from './uiState.js';
+import { markedRows, selectNone } from './selection.js';
 
-/** Remove the selected track, if it's still to come. */
+/** Remove the selected tracks that are still to come, last first so the indices stay valid. */
 export async function removeSelected() {
-	const i = uiState.pl.selected;
-	if (i === null) return flashMarquee('Select a track first');
-	if (i <= playback.queue.currentIndex) return flashMarquee("Can't remove a played track");
-	await api.removeFromQueue(i);
-	uiState.pl.selected = null;
+	const rows = markedRows(uiState.pl);
+	if (!rows.length) return flashMarquee('Select a track first');
+	const upcoming = rows.filter((i) => i > playback.queue.currentIndex);
+	if (!upcoming.length) return flashMarquee("Can't remove a played track");
+	for (const i of upcoming.reverse()) await api.removeFromQueue(i);
+	selectNone(uiState.pl);
+	if (upcoming.length < rows.length) flashMarquee('Played tracks stay put');
+	else if (upcoming.length > 1) flashMarquee(`Removed ${upcoming.length} tracks`);
+}
+
+/** Crop to selected: remove every upcoming track that isn't selected, last first. */
+export async function cropToSelected() {
+	const keep = uiState.pl.marked;
+	if (!keep.size) return flashMarquee('Select a track first');
+	const { items, currentIndex } = playback.queue;
+	let removed = 0;
+	for (let i = items.length - 1; i > currentIndex; i--) {
+		if (keep.has(i)) continue;
+		await api.removeFromQueue(i);
+		removed++;
+	}
+	selectNone(uiState.pl);
+	flashMarquee(removed ? `Removed ${removed} tracks` : 'Nothing to crop');
 }
 
 /** Remove every upcoming track, last first so the indices stay valid. */
 export async function clearUpcoming() {
 	const { items, currentIndex } = playback.queue;
 	for (let i = items.length - 1; i > currentIndex; i--) await api.removeFromQueue(i);
-	uiState.pl.selected = null;
+	selectNone(uiState.pl);
 	flashMarquee('Queue cleared');
 }
 

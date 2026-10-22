@@ -5,7 +5,9 @@ import {
 	CBUTTONS_POS,
 	CLOSE_BUTTON_POS,
 	CLUTTER_BUTTONS,
+	ABOUT_POS,
 	CLUTTER_POS,
+	MARQUEE_POS,
 	EQ_TOGGLE_POS,
 	MINIMIZE_BUTTON_POS,
 	OPTIONS_BUTTON_POS,
@@ -25,7 +27,6 @@ import {
 import { PL_H, PL_TRANSPORT_ORDER, PL_W, ROW_H, geometry, listRows, maxScroll } from './render/playlist.js';
 import {
 	cycleRepeat,
-	flashMarquee,
 	saveEq,
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
@@ -36,9 +37,12 @@ import {
 	prevTrack,
 	seekTo,
 	setVolume,
+	nudgeVolume,
+	commitVolume,
 	stopPlayback,
 	togglePlayPause,
 	resizeToLayout,
+	showNowFileInfo,
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
@@ -48,6 +52,8 @@ import { LYRICS_WHEEL_ROWS } from './render/lyrics.js';
 import { LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
 import { savePref } from './prefs.js';
 import { setActivePart } from './focus.js';
+import { showAbout } from './menu.js';
+import { clickRow, selectOnly } from './selection.js';
 import { uiState } from './uiState.js';
 import { playback } from '$lib/player.svelte';
 import { closeWinamp } from '$lib/api';
@@ -186,7 +192,7 @@ function percentFromHorizontalX(pos, x) {
 /** @typedef {'search' | 'playlist'} ListKind */
 /**
  * A menu other than the main one: a search result's, or one of the playlist's bottom buttons'.
- * @typedef {{ kind: 'result', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' | 'lyrics' }} MenuTarget
+ * @typedef {{ kind: 'result' | 'queueRow', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' | 'lyrics' | 'title' | 'vis' | 'art' | 'search-add' | 'search-rem' | 'search-sel' | 'search-misc' | 'search-list' }} MenuTarget
  */
 /** @typedef {{ w: number, h: number }} Size */
 /**
@@ -268,10 +274,28 @@ function playlistButtonAt(x, py, size) {
 const PLAYLIST_BUTTON_TIPS = {
 	add: 'Search YouTube Music, or open a YouTube link',
 	rem: 'Remove the selected track, or clear the queue',
-	sel: 'Save the queue as a playlist',
+	sel: 'Select all, none, or invert (Ctrl/Shift+click picks several)',
 	misc: 'Sort or reverse what plays next',
-	list: 'Load a playlist from your library'
+	list: 'Load a playlist from your library, or save the queue as one'
 };
+
+const SEARCH_BUTTON_TIPS = /** @type {Record<string, string>} */ ({
+	add: 'Play, play next or queue the selected results',
+	rem: 'Clear the results or the search box',
+	sel: 'Select all, none, or invert (Ctrl/Shift+click picks several)',
+	misc: 'Sort the results by title, artist or length, or reverse them',
+	list: 'Run a recent search again'
+});
+
+/**
+ * A song's tooltip: title, artist, album and length, a line each (whatever it has).
+ * @param {{ title: string, artists?: string, album?: string, duration?: string }} item
+ */
+function songTip(item) {
+	return [item.title, item.artists && `Artist: ${item.artists}`, item.album && `Album: ${item.album}`, item.duration && `Length: ${item.duration}`]
+		.filter(Boolean)
+		.join('\n');
+}
 
 /** Panel-relative (px, py) is on a framed panel's (album art, lyrics) close button. @param {Hit} hit */
 function onArtClose(hit) {
@@ -336,10 +360,15 @@ function tooltipAt(hit) {
 	if (hit.kind === 'art') {
 		if (onArtClose(hit)) return 'Close album art';
 		if (hit.py < artTitleHeight(uiState.art.frame)) return 'Double-click to float or dock';
-		return 'Album art (double-click to move it round the player; right-click for where it goes)';
+		return 'Album art (double-click to move it round the player; right-click for more)';
 	}
 	const x = hit.px;
 	const y = hit.py;
+	if (hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+		const now = playback.now;
+		const tip = now ? songTip({ title: now.title, artists: now.artists, album: now.album ?? undefined, duration: now.duration }) : 'Nothing playing';
+		return `${tip}\n\nDouble-click for file info, right-click for more`;
+	}
 	if (hit.kind !== 'main') {
 		const kind = hit.kind;
 		const size = { w: hit.w, h: hit.h };
@@ -350,13 +379,18 @@ function tooltipAt(hit) {
 		if (i !== null) {
 			// The full line: rows are clipped to the panel's width.
 			const item = kind === 'search' ? uiState.search.results[i] : playback.queue.items[i];
-			const tip = item ? `${item.artists ? `${item.artists} - ` : ''}${item.title}` : '';
-			return kind === 'search' ? `${tip}\nDouble-click to play, right-click for more` : tip;
+			const tip = item ? songTip(item) : '';
+			return `${tip}\n\nDouble-click to play, right-click for more`;
 		}
 		const button = transportAt(x, y, size);
 		if (button) return BUTTON_TIPS[button] ?? '';
-		const pb = kind === 'playlist' ? playlistButtonAt(x, y, size) : null;
-		return pb ? PLAYLIST_BUTTON_TIPS[pb] : '';
+		const mini = geometry(size).miniTime;
+		if (hits(mini, mini, x, y)) {
+			return uiState.timeRemaining ? 'Time remaining (click for elapsed)' : 'Time elapsed (click for remaining)';
+		}
+		const pb = playlistButtonAt(x, y, size);
+		if (!pb) return '';
+		return kind === 'playlist' ? PLAYLIST_BUTTON_TIPS[pb] : (SEARCH_BUTTON_TIPS[pb] ?? '');
 	}
 	if (hits(CLOSE_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Back to Limusic';
 	if (hits(OPTIONS_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Main menu (skins, shuffle, repeat)';
@@ -426,9 +460,12 @@ export function attachInput(canvas, host) {
 			return;
 		}
 		const i = rowAt(kind, x, py, size);
+		// A section header ("All" searches) is a label, not a row to pick.
+		if (i !== null && kind === 'search' && uiState.search.results[i]?.rowKind === 'header') return;
 		if (i !== null) {
-			view.selected = i;
-			if (event.detail >= 2) {
+			const ctrl = event.ctrlKey || event.metaKey;
+			clickRow(view, i, { ctrl, shift: event.shiftKey });
+			if (event.detail >= 2 && !ctrl && !event.shiftKey) {
 				const play = kind === 'search' ? playResult(i) : playIndex(i);
 				play.catch((e) => console.error('play failed', e));
 			}
@@ -441,10 +478,16 @@ export function attachInput(canvas, host) {
 			runButtonAction(button);
 			return;
 		}
-		const pb = kind === 'playlist' ? playlistButtonAt(x, py, size) : null;
-		if (pb) {
+		const mini = g.miniTime;
+		if (hits(mini, mini, x, py)) {
+			toggleTimeRemaining();
+			return;
+		}
+		const pb = playlistButtonAt(x, py, size);
+		const target = kind === 'playlist' ? pb : pb && `search-${pb}`;
+		if (pb && target) {
 			const r = geometry(size).buttons[pb];
-			host.showMenu({ kind: pb }, { x: hit.x + r.x, y: hit.y + r.y + r.h });
+			host.showMenu(/** @type {MenuTarget} */ ({ kind: target }), { x: hit.x + r.x, y: hit.y + r.y + r.h });
 		}
 	}
 
@@ -454,12 +497,22 @@ export function attachInput(canvas, host) {
 		const at = { x: event.clientX, y: event.clientY };
 		const hit = host.hitTest(x, y);
 		if (hit) setActivePart(hit.kind);
-		const i = hit?.kind === 'search' ? rowAt('search', hit.px, hit.py, hit) : null;
-		if (i !== null) {
-			uiState.search.selected = i;
-			host.showMenu({ kind: 'result', index: i }, at);
+		const list = hit?.kind === 'search' || hit?.kind === 'playlist' ? hit.kind : null;
+		const row = list && hit ? rowAt(list, hit.px, hit.py, hit) : null;
+		const i = list === 'search' && row !== null && uiState.search.results[row]?.rowKind === 'header' ? null : row;
+		if (list && i !== null) {
+			// A right-click outside the selection selects that row; inside, it acts on them all.
+			const view = panelState(list);
+			if (!view.marked.has(i)) selectOnly(view, i);
+			host.showMenu(list === 'search' ? { kind: 'result', index: i } : { kind: 'queueRow', index: i }, at);
 		} else if (hit?.kind === 'lyrics') {
 			host.showMenu({ kind: 'lyrics' }, at);
+		} else if (hit?.kind === 'art') {
+			host.showMenu({ kind: 'art' }, at);
+		} else if (hit?.kind === 'main' && hits(MARQUEE_POS, MARQUEE_POS, hit.px, hit.py)) {
+			host.showMenu({ kind: 'title' }, at);
+		} else if (hit?.kind === 'main' && hits(VIS_POS, VIS_POS, hit.px, hit.py)) {
+			host.showMenu({ kind: 'vis' }, at);
 		} else {
 			host.showMenu(null, at);
 		}
@@ -548,6 +601,15 @@ export function attachInput(canvas, host) {
 			getCurrentWindow().startDragging();
 			return;
 		}
+		if (hits(ABOUT_POS, ABOUT_POS, x, y)) {
+			showAbout().catch((e) => console.error('about failed', e));
+			return;
+		}
+		// The song title: double-click for file info, as in Winamp.
+		if (event.detail >= 2 && hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+			showNowFileInfo();
+			return;
+		}
 		if (hits(VIS_POS, VIS_POS, x, y)) {
 			toggleVisualizer();
 			return;
@@ -595,9 +657,7 @@ export function attachInput(canvas, host) {
 			if (hit?.kind === 'main' && hits(VOLUME_POS, VOLUME_POS, hit.px, hit.py)) {
 				// The wheel on the volume slider: 5% a notch, the level shown in the title, as Winamp does.
 				event.preventDefault();
-				const volume = Math.max(0, Math.min(100, Math.round(playback.volume) + (event.deltaY < 0 ? 5 : -5)));
-				setVolume(volume).catch((e) => console.error('set_volume failed', e));
-				flashMarquee(`Volume: ${volume}%`);
+				nudgeVolume(event.deltaY < 0 ? 5 : -5);
 				return;
 			}
 			if (hit?.kind !== 'search' && hit?.kind !== 'playlist') return;
@@ -653,6 +713,7 @@ export function attachInput(canvas, host) {
 			uiState.draggingSeek = false;
 		} else if (drag?.what === 'volume') {
 			uiState.draggingVolume = false;
+			commitVolume(uiState.draggingVolumeValue);
 		} else if (drag?.what === 'scroll') {
 			panelState(drag.kind).draggingScroll = false;
 		} else if (drag?.what === 'eq') {

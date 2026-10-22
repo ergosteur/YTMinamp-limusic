@@ -26,8 +26,9 @@ export function drawText(ctx, textSheet, text, x, y) {
  * @param {string} title
  * @param {number} nowMs
  * @param {{ font?: string, normal?: string }} pledit
+ * @param {boolean} [scroll] scroll a title too long for the box (off: cut it short)
  */
-export function drawTitle(ctx, title, nowMs, pledit) {
+export function drawTitle(ctx, title, nowMs, pledit, scroll = true) {
   // A TrueType line is taller than text.bmp's 6px row, so it's centred on that row (many skins
   // frame it in a box there) and clipped a little above and below it, well clear of the
   // kbps/kHz row at y 43.
@@ -44,7 +45,7 @@ export function drawTitle(ctx, title, nowMs, pledit) {
   // Centred on the bitmap row, a hair low so capitals sit in it rather than over its top.
   const y = MARQUEE_POS.y + MARQUEE_POS.h / 2 + 1;
   const width = ctx.measureText(title).width;
-  if (width <= MARQUEE_POS.w) {
+  if (width <= MARQUEE_POS.w || !scroll) {
     ctx.fillText(title, MARQUEE_POS.x, y);
   } else {
     const loop = `${title}${MARQUEE_SEPARATOR}`;

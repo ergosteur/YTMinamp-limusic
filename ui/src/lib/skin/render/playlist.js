@@ -5,6 +5,8 @@
 
 import { drawText } from './marquee.js';
 import { isLit } from '../focus.js';
+import { uiState } from '../uiState.js';
+import { playback } from '$lib/player.svelte';
 import { drawGenText, genTextWidth } from './albumArt.js';
 
 /** Docked size: Winamp's default. */
@@ -69,6 +71,8 @@ export function geometry(size = DOCKED) {
 		transport: { x: w - 150 + 3, y: h - BOTTOM_H + 22, w: 10, h: 10 },
 		/** The running-time readout above them. */
 		footer: { x: w - 150 + 7, y: h - BOTTOM_H + 10 },
+		/** The mini time to their right (Webamp's playlist-window.css .mini-time: 66, 23). */
+		miniTime: { x: w - 150 + 66, y: h - BOTTOM_H + 23, w: 31, h: 6 },
 		/** The bottom-right corner you drag to resize a floating panel. */
 		resize: { x: w - 20, y: h - 20, w: 20, h: 20 },
 		/** The playlist's bottom buttons (Webamp's playlist-window.css: 22x18, 12px up). */
@@ -124,7 +128,7 @@ export function maxScroll(count, visible = VISIBLE_ROWS) {
 }
 
 /** @typedef {import('$lib/api').SkinPayload['pledit']} PleditColours */
-/** @typedef {{ scroll: number, selected: number | null, pressed: string | null, draggingScroll: boolean }} PanelView */
+/** @typedef {{ scroll: number, selected: number | null, marked: Set<number>, pressed: string | null, draggingScroll: boolean }} PanelView */
 
 /**
  * The playlist editor.
@@ -171,7 +175,10 @@ export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED) {
 		view: search,
 		oy,
 		size,
-		footer: search.results.length ? `${search.results.length} found` : '',
+		footer: (() => {
+			const n = search.results.filter((r) => /** @type {{ rowKind?: string }} */ (r).rowKind !== 'header').length;
+			return n ? `${n} results` : '';
+		})(),
 		status: search.status
 	});
 }
@@ -252,18 +259,31 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 		const i = view.scroll + row;
 		if (i >= items.length) break;
 		const y = oy + area.y + row * ROW_H;
-		if (i === view.selected) {
+		if (view.marked.has(i) && /** @type {{ rowKind?: string }} */ (items[i]).rowKind !== 'header') {
 			ctx.fillStyle = pledit.selectedBg ?? '#0000c6';
 			ctx.fillRect(LIST.x, y, LIST.w, ROW_H);
 		}
-		const item = items[i];
+		const item = /** @type {{ title: string, artists: string, duration?: string, rowKind?: string, browse?: unknown }} */ (items[i]);
+		if (item.rowKind === 'header') {
+			// A section of an "All" search: the label alone, in the current-track colour.
+			ctx.fillStyle = pledit.current ?? '#ffffff';
+			ctx.textAlign = 'left';
+			ctx.fillText(item.title.toUpperCase(), LIST.x + 2, y + ROW_H / 2);
+			continue;
+		}
 		ctx.fillStyle = (i === current ? pledit.current : pledit.normal) ?? '#00ff00';
 		const duration = item.duration ?? '';
 		const durationW = ctx.measureText(duration).width;
 		ctx.textAlign = 'right';
 		ctx.fillText(duration, LIST.x + LIST.w - 3, y + ROW_H / 2);
 		ctx.textAlign = 'left';
-		const label = `${i + 1}. ${item.artists ? `${item.artists} - ` : ''}${item.title}`;
+		// Numbered past any headers above; an album, artist or playlist reads "Title — subtitle".
+		let n = i + 1;
+		for (let h = 0; h < i; h++) if (/** @type {{ rowKind?: string }} */ (items[h]).rowKind === 'header') n--;
+		const text = item.browse
+			? `${item.title}${item.artists ? ` — ${item.artists}` : ''}`
+			: `${item.artists ? `${item.artists} - ` : ''}${item.title}`;
+		const label = `${n}. ${text}`;
 		ctx.save();
 		ctx.beginPath();
 		ctx.rect(LIST.x, y, LIST.w - durationW - 8, ROW_H);
@@ -279,4 +299,22 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 	blit(ctx, sheet, view.draggingScroll ? PLEDIT.scrollHandleSelected : PLEDIT.scrollHandle, g.scroll.x, handleY);
 
 	if (text && footer) drawText(ctx, text, footer, g.footer.x, oy + g.footer.y);
+	if (text) drawMiniTime(ctx, text, g.miniTime.x, oy + g.miniTime.y);
+}
+
+/**
+ * The mini time beside the small transport buttons: the playing time in text.bmp's letters, as in
+ * the main window (elapsed or, with a minus, remaining). The colon is the
+ * skin's own. Webamp's MiniTime.tsx: characters at 1, 7, 12, 20 and 25.
+ * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} text @param {number} x @param {number} y
+ */
+function drawMiniTime(ctx, text, x, y) {
+	// Not blinking while paused, as Winamp's does: the main window's clock here doesn't either.
+	if (!playback.now) return;
+	const remaining = uiState.timeRemaining && playback.duration > 0;
+	const secs = Math.max(0, Math.floor(remaining ? playback.duration - playback.position : playback.position));
+	const m = Math.min(99, Math.floor(secs / 60));
+	const s = secs % 60;
+	const chars = [remaining ? '-' : ' ', String(Math.floor(m / 10)), String(m % 10), String(Math.floor(s / 10)), String(s % 10)];
+	[1, 7, 12, 20, 25].forEach((dx, i) => drawText(ctx, text, chars[i], x + dx, y));
 }

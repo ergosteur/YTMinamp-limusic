@@ -140,7 +140,7 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
     drawTimeDigits(ctx, numbers, numsEx, secs, remaining);
   }
 
-  drawTitle(ctx, uiState.loading ? "loading..." : uiState.title, nowMs, uiState.pledit);
+  drawTitle(ctx, uiState.loading ? "loading..." : uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll);
 
   const text = sprites.get("text");
   if (text) {
@@ -263,9 +263,10 @@ function drawPosbar(ctx, sprites, uiState) {
  */
 function drawSlider(ctx, sheet, table, pos, frameY, percent) {
   if (!sheet) return;
-  // Visible window is cropped 1px top/bottom vs. the 15px-tall source frame (Webamp's own
-  // documented quirk, see sprites.js).
-  const srcY = table.background.y + frameY + 1;
+  // Each 15px source frame shows its top 13 rows, as in Winamp and Webamp (MainVolume.tsx's
+  // backgroundPosition on a 13px box). The last 2 are never drawn: the base skin has a last row of
+  // art and a separator line there, other skins anything (iTunes_6_Winamp: cyan).
+  const srcY = table.background.y + frameY;
   ctx.drawImage(sheet, table.background.x, srcY, pos.w, pos.h, pos.x, pos.y, pos.w, pos.h);
 
   const thumb = table.thumb;

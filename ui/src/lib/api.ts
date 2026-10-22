@@ -582,7 +582,7 @@ export interface WinampMenuEntry {
 export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number) =>
 	invoke<void>('winamp_popup_menu', { items, x, y });
 /** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
-export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop';
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo';
 /** Float a panel in its own window, or bring that window back if it's up. */
 export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
 	invoke<void>('open_winamp_panel', { kind, width, height });

@@ -20,7 +20,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 7] = ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop"];
+pub const PANELS: [&str; 9] = ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo"];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
 
@@ -173,12 +173,17 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "eq" => "Equalizer",
         "lyrics" => "Lyrics",
         "milkdrop" => "MilkDrop",
+        "eqsave" => "Save EQ Preset",
+        "fileinfo" => "File Info",
         _ => "Search",
     };
+    // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a
+    // non-resizable window to the screen, and switching resizable on just before the fullscreen
+    // request races the compositor (it fullscreens at the old size, about nine times in ten).
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
-        .resizable(false)
+        .resizable(panel == "milkdrop")
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -470,6 +475,11 @@ struct Prefs {
 /// The UI's remembered state (the `ui` object of `winamp.json`).
 pub fn ui_prefs(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
     read_prefs(app).ui
+}
+
+/// "Always start in Winamp mode" (the main menu's checkbox, winamp.json's `startInWinamp`).
+pub fn start_in_winamp(app: &AppHandle) -> bool {
+    ui_prefs(app).get("startInWinamp").and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
 /// Merge `patch`'s top-level keys into the UI's remembered state. Per key, not wholesale, so

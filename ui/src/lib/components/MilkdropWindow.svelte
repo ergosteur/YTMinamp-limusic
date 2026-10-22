@@ -16,6 +16,7 @@
 	import { attachKeys } from '../skin/keys.js';
 	import { loadPrefs, pref, savePref } from '../skin/prefs.js';
 	import { showMilkdropMenu } from '../skin/menu.js';
+	import { thumb } from '$lib/thumb';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -75,6 +76,8 @@
 	let presetOsd = $state(/** @type {OsdMode} */ ('change'));
 	let trackOsd = $state(/** @type {OsdMode} */ ('change'));
 	let trackShownUntil = $state(0);
+	/** The album art over the visualization, translucent (right-click menu; remembered). */
+	let artOverlay = $state(false);
 	const OSD_MS = 5000;
 	/** "4:00" from seconds. @param {number} secs */
 	const clock = (secs) => {
@@ -170,6 +173,13 @@
 			get presetOsd() {
 				return presetOsd;
 			},
+			get artOverlay() {
+				return artOverlay;
+			},
+			toggleArtOverlay() {
+				artOverlay = !artOverlay;
+				savePref('milkdropArtOverlay', artOverlay);
+			},
 			get trackOsd() {
 				return trackOsd;
 			},
@@ -186,7 +196,11 @@
 				if (mode === 'change') trackShownUntil = performance.now() + OSD_MS;
 			},
 			async toggleFullscreen() {
-				fullscreen = !(await win.isFullscreen());
+				// Our own state, flipped per press: asking the window right after a change can still
+				// answer the old one while the compositor applies it, and a quick second press would
+				// then undo the first. A resize puts it right (onResized below). This window is the
+				// one resizable panel (winamp.rs), which GTK needs for fullscreen to fill the screen.
+				fullscreen = !fullscreen;
 				await win.setFullscreen(fullscreen);
 				fit();
 			},
@@ -302,8 +316,15 @@
 		// Window keys (Z X C V B and the rest) go to the Winamp window as everywhere; these are ours.
 		const detachKeys = attachKeys();
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
-			// The browser's filter box has the keys while it's open (browserKey).
-			if (browsing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+			// The browser's filter box has its own keys (browserKey); anywhere else, Esc closes it.
+			if (browsing) {
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					browsing = false;
+				}
+				return;
+			}
+			if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
 			const key = e.key.toLowerCase();
 			if (key === 'l') controls.browse();
 			else if (key === 'n') controls.next();
@@ -317,6 +338,16 @@
 
 		/** @type {{ x: number, y: number, w: number, h: number } | null} */
 		let resizing = null;
+		/** A press on the picture: a window drag once the pointer moves. */
+		let press = /** @type {{ x: number, y: number } | null} */ (null);
+		// The real state, once the window has actually changed size (see toggleFullscreen).
+		const unlistenResized = win.onResized(async () => {
+			const real = await win.isFullscreen();
+			if (real !== fullscreen) {
+				fullscreen = real;
+				fit();
+			}
+		});
 		const onClose = (/** @type {MouseEvent} */ e) => {
 			const x = window.innerWidth + ART_CLOSE.dx;
 			return !fullscreen && e.clientX >= x && e.clientX < x + ART_CLOSE.w && e.clientY >= ART_CLOSE.y && e.clientY < ART_CLOSE.y + ART_CLOSE.h;
@@ -331,11 +362,20 @@
 				closePressed = true;
 				return;
 			}
-			if (e.detail >= 2) return void controls.toggleFullscreen();
+			if (e.detail >= 2) {
+				press = null;
+				return void controls.toggleFullscreen();
+			}
 			if (onCorner(e)) resizing = { x: e.screenX, y: e.screenY, w: window.innerWidth, h: window.innerHeight };
-			else if (!fullscreen) win.startDragging();
+			// A drag only once the pointer moves: started on the press, the compositor's window move
+			// would swallow a double-click's second click, and with it the fullscreen request.
+			else if (!fullscreen) press = { x: e.screenX, y: e.screenY };
 		};
 		const onMove = (/** @type {MouseEvent} */ e) => {
+			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
+				press = null;
+				win.startDragging();
+			}
 			document.body.style.cursor = resizing || onCorner(e) ? 'nwse-resize' : '';
 			if (!resizing) return;
 			const w = Math.max(MIN.w, resizing.w + e.screenX - resizing.x);
@@ -343,6 +383,7 @@
 			resizeWinampPanel('milkdrop', w, h).catch(() => {});
 		};
 		const onUp = (/** @type {MouseEvent} */ e) => {
+			press = null;
 			if (closePressed) {
 				closePressed = false;
 				if (onClose(e)) controls.close();
@@ -360,6 +401,7 @@
 			presetOsd = pref('milkdropPresetOsd', 'change');
 			trackOsd = pref('milkdropTrackOsd', 'change');
 			autoSeconds = pref('milkdropAutoSeconds', AUTO_SECONDS);
+			artOverlay = pref('milkdropArtOverlay', false);
 			nextAuto = performance.now() + autoSeconds * 1000;
 		});
 		window.addEventListener('mousedown', onDown);
@@ -371,6 +413,7 @@
 			cancelAnimationFrame(raf);
 			unlistenWave.then((f) => f());
 			unlistenSkin.then((f) => f());
+			unlistenResized.then((f) => f());
 			window.removeEventListener('mousedown', onDown);
 			window.removeEventListener('contextmenu', onMenu);
 			detachKeys();
@@ -402,6 +445,14 @@
 <div class="milkdrop">
 	<canvas class="frame" bind:this={frameCanvas}></canvas>
 	<canvas class="viz" bind:this={canvas}></canvas>
+	{#if artOverlay && playback.now?.thumbnail}
+		{@const a = fullscreen ? { l: 0, t: 0, r: 0, b: 0 } : { l: inset.left, t: inset.top, r: inset.right, b: inset.bottom }}
+		<!-- A box over the picture (the whole screen in fullscreen) for the cover to fit inside: an
+		     <img> given all four sides keeps its own size instead of stretching between them. -->
+		<div class="art-overlay" style:left="{a.l}px" style:top="{a.t}px" style:right="{a.r}px" style:bottom="{a.b}px">
+			<img src={thumb(playback.now.thumbnail, 1200) ?? playback.now.thumbnail} alt="" />
+		</div>
+	{/if}
 	{#if browsing}
 		{@const a = fullscreen ? { l: 0, t: 0, r: 0, b: 0 } : { l: inset.left, t: inset.top, r: inset.right, b: inset.bottom }}
 		<div
@@ -513,6 +564,19 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		cursor: default;
+	}
+	/* Fitted inside the picture, whole, aspect kept, translucent; clicks go through to the window. */
+	.art-overlay {
+		position: absolute;
+		opacity: 0.35;
+		pointer-events: none;
+	}
+	.art-overlay img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		object-position: center;
 	}
 	.note p {
 		margin: 0;

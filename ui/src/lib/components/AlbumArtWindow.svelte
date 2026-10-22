@@ -14,7 +14,10 @@
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { coverFor } from '../skin/art.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
-	import { loadSkin } from '../skin/skinApi.js';
+	import { ART_CAPTION_EVENT, loadSkin } from '../skin/skinApi.js';
+	import { loadPrefs, pref } from '../skin/prefs.js';
+	import { showArtMenu } from '../skin/menu.js';
+	import { uiState } from '../skin/uiState.js';
 
 	/** The corner you drag to resize, like Winamp's generic windows. */
 	const GRIP = 14;
@@ -26,6 +29,8 @@
 	/** @type {Map<string, ImageBitmap>} */
 	let sprites = new Map();
 	let closePressed = false;
+	/** The playlist's colours, for the album name under the picture. @type {import('$lib/api').SkinPayload['pledit']} */
+	let pledit = {};
 
 	/** Ask the Winamp window to dock the art (`dock`) or hide it (null). */
 	const dockTo = (/** @type {import('../skin/uiState.js').ArtDock | null} */ dock) =>
@@ -37,11 +42,23 @@
 
 		const reload = () =>
 			loadSkin()
-				.then((payload) => decodeAllSprites(payload.sprites))
+				.then((payload) => {
+					pledit = payload.pledit;
+					return decodeAllSprites(payload.sprites);
+				})
 				.then((decoded) => (sprites = decoded))
 				.catch((e) => logUi('error', `album art skin failed: ${e}`));
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
+		// The album name under the picture: this window grows or shrinks by its strip.
+		const setCaption = (/** @type {boolean} */ on) => {
+			uiState.art.caption = on;
+			if (sprites.size === 0) return;
+			const size = artSize(artFrame(sprites), { width: window.innerWidth }, on);
+			resizeWinampPanel('art', size.w, size.h).catch(() => {});
+		};
+		loadPrefs().then(() => (uiState.art.caption = pref('artCaption', false)));
+		const unlistenCaption = listen(ART_CAPTION_EVENT, (e) => setCaption(/** @type {boolean} */ (e.payload)));
 
 		/** A press that becomes a window drag once the mouse moves (so double-clicks still land). */
 		let press = /** @type {{ x: number, y: number } | null} */ (null);
@@ -81,7 +98,7 @@
 			const byWidth = resize.w + (e.screenX - resize.x);
 			const byHeight = resize.w + (e.screenY - resize.y);
 			const width = Math.max(artSize(frame, { width: MIN_WIDTH }).w, Math.round(Math.max(byWidth, byHeight)));
-			const size = artSize(frame, { width });
+			const size = artSize(frame, { width }, uiState.art.caption);
 			const sendNow = pending === null;
 			pending = size;
 			if (sendNow) {
@@ -101,9 +118,13 @@
 			}
 		};
 		canvas.addEventListener('mousedown', onDown);
+		canvas.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			showArtMenu({ x: e.clientX, y: e.clientY }).catch((err) => console.error('menu failed', err));
+		});
 		window.addEventListener('mousemove', onMove);
 		window.addEventListener('mouseup', onUp);
-		canvas.title = 'Album art (double-click to dock it back; drag the corner to resize)';
+		canvas.title = 'Album art (double-click to dock it back; drag the corner to resize; right-click for more)';
 
 		const stopLoop = startRenderLoop(() => {
 			if (sprites.size === 0) return;
@@ -118,12 +139,14 @@
 				canvas.style.height = `${h}px`;
 			}
 			ctx.clearRect(0, 0, w, h);
-			drawAlbumArt(ctx, sprites, coverFor(playback.now?.thumbnail), { x: 0, y: 0, w, h }, closePressed);
+			const caption = uiState.art.caption ? { text: playback.now?.album ?? '', pledit } : null;
+			drawAlbumArt(ctx, sprites, coverFor(playback.now?.thumbnail), { x: 0, y: 0, w, h }, closePressed, caption);
 		});
 
 		return () => {
 			stopLoop();
 			unlistenSkin.then((f) => f());
+			unlistenCaption.then((f) => f());
 			window.removeEventListener('mousemove', onMove);
 			window.removeEventListener('mouseup', onUp);
 		};

@@ -101,12 +101,13 @@ signal while music plays.
 It sits in the skin's generic frame, titled MILKDROP; fullscreen drops the frame. Presets
 change automatically with a blend, every 20 seconds unless the right-click menu says otherwise
 (off, 10 s to 5 min). N / P next and previous, L the preset browser (MilkDrop's own key: a
-filterable list over the picture in the skin's playlist colours; click or Enter picks, Esc or L
-closes), F or a double-click fullscreen, Esc leaves it. Drag to move, the frame's corner to resize
+filterable list over the picture in the skin's playlist colours; click or Enter picks, Esc
+(wherever the focus is) or L closes), F or a double-click fullscreen, Esc leaves it. Drag to move, the frame's corner to resize
 (remembered). Two on-screen texts, each shown on change (for five seconds), always, or never from
 the right-click menu: the preset's name (bottom left) and the track's artist, title and time
-(top left, on every track change). The other Winamp keys work here too; all the settings are
-remembered.
+(top left, on every track change). **Album art overlay** draws the playing track's cover over the
+picture, fitted whole and 35% opaque (clicks go through it). The other Winamp keys work here too;
+all the settings are remembered.
 
 ## Playlist editor
 
@@ -121,11 +122,11 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 
 | Button | Does |
 |---|---|
-| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
+| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Browse library…** (Limusic's Library page in the full window, Winamp mode staying open: `navigate.js`), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
 | REM | Remove the selected track, or clear the queue |
-| SEL | Save the queue as a playlist, in the YouTube Music library (signed in) or only on this machine |
+| SEL | Select all, none, or invert the selection, as in Winamp (Ctrl/Shift+click selects several) |
 | MISC | Sort what plays next by title or artist, or reverse it |
-| LIST | Load a playlist (local and YouTube Music sections; replaces the queue). Some skins label it LOAD LIST |
+| LIST | **Load ▸** a playlist (local and YouTube Music sections; replaces the queue), or **Save ▸** the queue as one, in the YouTube Music library (signed in) or only on this machine. Some skins label it LOAD LIST |
 
 LIST and the main menu's Play ▸ never wait on YouTube Music: they show the playlists as last
 fetched and refresh them behind the menu for next time (`libraryPlaylists` in
@@ -144,7 +145,73 @@ a result; Enter (or double-click) plays it now, with YouTube Music's radio after
 in Limusic; Shift+Enter adds it to the queue; right-click a result for Play / Play next / Add to
 queue; Esc closes the panel.
 
+**What it searches for** is the **Songs ▾** button at the right end of the box
+(`searchKinds.js`, remembered as `searchKind`): Songs, Videos, Albums, Artists, Playlists, or All
+(Limusic's own searches: `search`, `searchVideos`, `searchCards`, `searchAll`). All comes in
+sections (Top result, Songs, Albums, Artists, Playlists) under header rows that can't be picked.
+Albums, artists and playlists read "Title — details"; double-click (or Play) does what a click
+does in Limusic, short of opening a page: an album or playlist replaces the queue, an artist starts
+its radio. Play next and Add to queue take an album's or playlist's tracks; artists can't be
+queued. Ratings, the library and playlists take only the song rows; File info shows any row, with
+its own YouTube Music link.
+
+Its bottom bar counts the results ("20 RESULTS"). Its buttons, after the playlist's:
+
+| Button | Does |
+|---|---|
+| ADD | Play / Play next / Add to queue for the selected results, as the right-click menu does |
+| REM | Clear results, Clear search box |
+| SEL | Select all / none / Invert selection |
+| MISC | Sort the results by title, artist or length, or reverse them |
+| LIST | Recent searches (the last ten, remembered as `searchHistory`): pick one to run it again |
+
+### Selecting rows, the mini time
+
+The playlist and search lists select the way OS lists do (`ui/src/lib/skin/selection.js`): a
+click picks a row, Ctrl+click toggles one, Shift+click selects the range from the last click,
+Ctrl+Shift+click adds that range. Delete removes every selected track still to come; the search
+menus act on every selected result (played first then the rest next, or queued in order).
+
+Both panels show the playing time in the small box beside their mini transport buttons, in the
+skin's text font (Webamp's MiniTime: elapsed, or remaining with a minus). Unlike Winamp's it
+doesn't blink while paused, since the main window's clock here doesn't either. Click it to
+switch, as with the main window's clock.
+
+## Context menus
+
+Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping what applies:
+
+| Right-click | Menu |
+|---|---|
+| A playlist row | Play; Remove selected (Delete), Crop to selected (Ctrl+Delete); View file info... (Alt+3); Rate items ▸ |
+| A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸ |
+| The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸ |
+| The analyzer | Start/Stop plug-in (Ctrl+Shift+K, MilkDrop); Run the plug-in on start-up; the plug-in list (MilkDrop); Spectrum analyser / Off |
+| The album art | View file info... (Alt+3); Show full-size artwork (the biggest YouTube serves, in the browser); Show album name (a strip under the picture, any script, remembered as `artCaption`, in every window); Placement ▸; Copy link, Open in YouTube Music |
+| Anywhere else | The main menu |
+
+Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
+title, then artist, album and length, a line each.
+
+A right-click inside a selection acts on all of it; outside, it selects that row first. Rate
+items ▸ (Rating ▸ on the title) holds Like / Dislike / No rating, Add to (or Remove from) library,
+and Add to existing playlist ▸, all Limusic's own (`setRating`, `toggleSongLibrary`,
+`addSongsToPlaylists`), so they show in Limusic too. The library move needs the token YouTube
+sends with a row, so it's greyed out for rows without one; On Repeat and Liked Music aren't
+offered as playlists to add to. The Winamp
+logo at the bottom right opens About.
+
+**File info** (`FileInfoWindow.svelte`, window `winamp-fileinfo`): the cover, title, artist,
+album, length, play count, who added or queued it, and the video ID, with Copy link and Open in
+browser. The track reaches the window through localStorage (`showFileInfo` in `skinApi.js`), which
+every window shares, so an open File info window follows the next one shown.
+
 ## Clutterbar, double size, always on top
+
+The main menu's **Always start in Winamp mode** (winamp.json's `startInWinamp`) opens the app in
+Winamp mode instead of the full window: Rust's `show_main`, which the page calls once to reveal
+the hidden main window at launch, opens the Winamp window instead. "Start minimized to tray"
+still wins.
 
 The O A I D V strip left of the time display (sprites from `titlebar.bmp`): **O** opens the main
 menu, **A** keeps every Winamp window above others (`winamp::set_always_on_top`, new windows too),
@@ -168,7 +235,8 @@ Space keep their meaning.
 | J, Ctrl+L | Search, Open YouTube URL |
 | Alt+E, Alt+G, Alt+A, Alt+Y | Playlist editor, equalizer, album art, lyrics |
 | Ctrl+A, Ctrl+2, Ctrl+T | Always on top, double size (Winamp's Ctrl+D is Limusic's previous track), time remaining |
-| Delete, Enter | Remove / play the selected playlist track |
+| Delete, Ctrl+Delete, Enter | Remove the selected playlist tracks, crop to them (remove every other upcoming one), play the selected one |
+| Alt+3 | File info: the selected row when the playlist or search panel is the active window, otherwise what's playing |
 | Ctrl+= (or +, numpad +), Ctrl+-, Ctrl+0 | Lyrics text bigger, smaller, back to normal (while they're showing); the same keys Limusic zooms its own window with |
 | Ctrl+Shift+K | MilkDrop window |
 
@@ -184,6 +252,13 @@ coloured from the skin's colour strip), and PRESETS with Winamp's built-in prese
 one-octave `equalizer` per band at Winamp's 60 Hz-16 kHz, ±12 dB), and every slider move retunes
 it live through mpv's `af-command` (`Player::af_command`), so nothing rebuilds and nothing clicks.
 OFF flattens it. AUTO (loading a preset per track) is remembered but not acted on.
+
+PRESETS lists your own presets first (click to load), then Winamp's built-in ones in a submenu,
+**Save current as preset...** (a small naming dialog in the skin's frame, `EqPresetWindow.svelte`,
+window `winamp-eqsave`; an existing name is replaced), **Delete preset** and **Reset (flat)**.
+Your presets are kept in `winamp.json` as `eqPresets` (name, preamp and ten bands, 0-100 like
+the sliders). The dialog writes them straight away (`flushPrefs`) rather than in the usual
+batch, since it closes at once.
 
 The EQ and the analyzer's filter go in the first time the Winamp window opens and stay until the
 app quits, so the EQ goes on sounding the same in the full Limusic window, and switching back
@@ -205,6 +280,15 @@ remembered. Each line's romanization and translation (Limusic's, from `romanize.
 lyrics providers) show under it, smaller, when switched on from the panel's right-click menu.
 Those are Limusic's own two switches (the same localStorage keys as `LyricsView.svelte`): on in
 one place is on in both. Translations start on and romanization off, as in Limusic.
+
+When the lyrics found are the wrong ones, the panel's footer has Limusic's own source picker
+(`LyricsSourcePicker.svelte` in `WinampLyricsFooter.svelte`, laid over a strip
+`render/lyrics.js` keeps at the bottom): "Lyrics from ..." opens every provider's answer side by
+side, to pin one, nudge the timing, or search with a corrected title. In a small floating lyrics
+window its popover can be cut off by the window's edge, so the right-click menu has the same in
+native form: **Lyrics source ▸** (Automatic, or one provider: `chooseLyricsSource`) and
+**Timing ▸** (a quarter second earlier or later, or reset: `setLyricsOffset`). Both are kept per
+song by Limusic, so they apply in its own lyrics view too.
 
 ## Remembered state
 

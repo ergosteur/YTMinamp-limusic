@@ -27,7 +27,7 @@ const CLASSIC_STACK_H = MAIN_H + EQ_H + PL_H;
 export function dockedLayout() {
 	const art = uiState.art;
 	const side = art.open && (art.dock === 'left' || art.dock === 'right');
-	const beside = artSize(art.frame, { height: MAIN_H });
+	const beside = artSize(art.frame, { height: MAIN_H }, art.caption);
 	const mainX = side && art.dock === 'left' ? beside.w : 0;
 
 	/** @type {Placed[]} */
@@ -46,7 +46,7 @@ export function dockedLayout() {
 	if (uiState.eq.open && uiState.eq.dock === 'stack') stack('eq', EQ_H);
 	if (uiState.search.open && uiState.search.dock === 'stack') stack('search', PL_H);
 	if (uiState.pl.open && uiState.pl.dock === 'stack') stack('playlist', PL_H);
-	if (art.open && art.dock === 'stack') stack('art', artSize(art.frame, { width: MAIN_W }).h);
+	if (art.open && art.dock === 'stack') stack('art', artSize(art.frame, { width: MAIN_W }, art.caption).h);
 
 	// Lyrics docked: to the right of the whole stack, at least as tall as the classic one (main,
 	// EQ, playlist). Album art can't take that side then (skinApi.js keeps the two apart).

@@ -14,10 +14,19 @@
 // in flight is dropped, and the previous menu is freed before the next is built.
 import { Menu } from '@tauri-apps/api/menu';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { open } from '@tauri-apps/plugin-dialog';
 import * as api from '$lib/api';
-import { playback } from '$lib/player.svelte';
+import {
+	addSongsToPlaylists,
+	inSongLibrary,
+	playback,
+	ratingOf,
+	setRating,
+	songLibraryToken,
+	toggleSongLibrary
+} from '$lib/player.svelte';
 import { message } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import {
@@ -40,18 +49,43 @@ import {
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
 	togglePanel,
+	flashMarquee,
+	queueResults,
+	playResults,
+	openEqPresetDialog,
+	clearResults,
+	clearSearchBox,
+	searchAgain,
+	sortResults,
+	nowAsItem,
+	showFileInfo,
+	showNowFileInfo,
+	placeArt,
+	toggleArtCaption,
+	setSearchKind,
+	toggleMarqueeScroll,
+	toggleMilkdropOnStart,
+	playIndex,
 	toggleMilkdrop,
+	toggleStartInWinamp,
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
 import { toggleTimeRemaining, toggleVisualizer } from './input.js';
 import { EQ_PRESETS } from './render/equalizer.js';
-import { lyricsNow, lyricsShow, toggleLyricsShow } from './lyrics.js';
+import { lyricsNow, lyricsShow, lyricsTrack, pickedLyrics, toggleLyricsShow } from './lyrics.js';
 import { zoomFactor } from './pixels.js';
+import { thumb } from '$lib/thumb';
+import { SEARCH_KINDS, isSongRow } from './searchKinds.js';
+import { openInLimusic } from './navigate.js';
+import { copyText } from '$lib/clipboard';
+import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
+import { loadPrefs, pref, savePref } from './prefs.js';
 import { YTMINAMP_RELEASE } from './release.js';
 import { uiState } from './uiState.js';
 import {
 	clearUpcoming,
+	cropToSelected,
 	libraryPlaylists,
 	loadPlaylist,
 	removeSelected,
@@ -96,7 +130,10 @@ function toEntries(items) {
 		if (item.accel) entry.accel = item.accel;
 		if (item.items) entry.items = toEntries(item.items);
 		if (item.action) {
-			const id = String(actions.size);
+			// Prefixed with this window's label: every window hears every pick (the global `listen`
+			// below), so a bare number from MilkDrop's menu would run the Winamp window's same-number
+			// item (Next preset opened Open URL).
+			const id = `${getCurrentWebviewWindow().label}:${actions.size}`;
 			actions.set(id, item.action);
 			entry.id = id;
 		}
@@ -120,6 +157,7 @@ async function popup(describe, at) {
 		if (gtkMenus !== false) {
 			if (!listening) {
 				listening = true;
+				// Hears every window's picks; the ids are this window's own (see toEntries).
 				await listen('winamp-menu', (e) => actions.get(/** @type {string} */ (e.payload))?.());
 			}
 			actions = new Map();
@@ -155,12 +193,169 @@ function stripAccels(options) {
  * @param {MenuAt} at
  */
 export function showResultMenu(index, at) {
+	return popup(async () => ({ items: await resultItems(index) }), at);
+}
+
+/**
+ * Play / play next / add to queue for the selected results (or `index` if none are), the
+ * right-click menu's and the search panel's ADD's.
+ * @param {number | null} [index]
+ */
+async function resultItems(index = null) {
+	const results = uiState.search.results;
+	const marked = markedRows(uiState.search).filter((i) => results[i]?.rowKind !== 'header');
+	const rows = marked.length ? marked : index === null ? [] : [index];
+	if (!rows.length) return [{ text: 'Select some results first', enabled: false }];
+	const n = rows.length > 1 ? ` (${rows.length})` : '';
+	const info = results[index ?? rows[0]];
+	// An artist can be played (its radio) but not queued; an album or playlist queues its tracks.
+	const queueable = rows.some((i) => results[i]?.rowKind !== 'artist');
+	const one = rows.length === 1 ? results[rows[0]]?.rowKind : undefined;
+	const play = one === 'artist' ? 'Play radio' : one === 'album' ? 'Play album' : one === 'playlist' ? 'Play playlist' : `Play${n}`;
+	return [
+		{ text: play, accel: 'Enter', action: () => playResults(rows).catch(log('play')) },
+		{ text: `Play next${n}`, enabled: queueable, action: () => queueResults(rows, true).catch(log('play next')) },
+		{ text: `Add to queue${n}`, enabled: queueable, accel: 'Shift+Enter', action: () => queueResults(rows, false).catch(log('add to queue')) },
+		SEPARATOR,
+		{ text: 'View file info...', accel: 'Alt+3', enabled: !!info, action: () => info && showFileInfo(info) },
+		SEPARATOR,
+		rows.some((i) => isSongRow(results[i]))
+			? { text: 'Rate items', items: await ratingItems(rows.map((i) => results[i]).filter(isSongRow)) }
+			: { text: 'Rate items', enabled: false }
+	];
+}
+
+/**
+ * Rate items ▸: Like / Dislike / No rating (ticked for how the first is rated now), then Add to /
+ * Remove from library and Add to existing playlist. All Limusic's own (player.svelte.ts
+ * `setRating`, `toggleSongLibrary`, `addSongsToPlaylists`), so they show there too.
+ * @param {import('$lib/api').SongItem[]} items
+ */
+async function ratingItems(items) {
+	const now = items[0] ? ratingOf(items[0]) : null;
+	/** @param {import('$lib/api').Rating} r */
+	const rate = (r) =>
+		Promise.all(items.map((item) => setRating(item, r)))
+			.then(() => flashMarquee(r === 'like' ? 'Liked' : r === 'dislike' ? 'Disliked' : 'Rating cleared'))
+			.catch((e) => flashMarquee(`Couldn't rate: ${e}`));
+	// Library ▸ Songs takes a token YouTube mints per row, so only rows that came with one can move.
+	const movable = items.filter((item) => songLibraryToken(item));
+	const saved = movable.length > 0 && movable.every((item) => inSongLibrary(item));
+	const library = () =>
+		Promise.all(movable.map((item) => toggleSongLibrary(item)))
+			.then(() => flashMarquee(saved ? 'Removed from library' : 'Added to library'))
+			.catch((e) => flashMarquee(`Couldn't change the library: ${e}`));
+	// Playlists songs can go into: not On Repeat or Liked Music. The cached list, like LIST's.
+	const { playlists } = await libraryPlaylists();
+	const targets = playlists.filter((p) => p.id !== api.ON_REPEAT_ID && p.id !== api.LIKED_MUSIC_ID);
+	const addTo = (/** @type {import('$lib/api').BrowseItem} */ p) =>
+		addSongsToPlaylists([p], items, 'skip')
+			.then(() => flashMarquee(`Added to ${p.title}`))
+			.catch((e) => flashMarquee(`Couldn't add: ${e}`));
+	return [
+		{ text: 'Like', checked: now === 'like', action: () => rate('like') },
+		{ text: 'Dislike', checked: now === 'dislike', action: () => rate('dislike') },
+		{ text: 'No rating', checked: now === 'indifferent', action: () => rate('indifferent') },
+		SEPARATOR,
+		movable.length
+			? { text: saved ? 'Remove from library' : 'Add to library', action: library }
+			: { text: 'Add to library', enabled: false },
+		targets.length
+			? { text: 'Add to existing playlist', items: targets.map((p) => ({ text: p.title, action: () => addTo(p) })) }
+			: { text: 'Add to existing playlist', enabled: false }
+	];
+}
+
+/**
+ * The song title's right-click menu, real Winamp's in order, with what applies here.
+ * @param {MenuAt} at
+ */
+export function showTitleMenu(at) {
+	return popup(async () => {
+		const now = nowAsItem();
+		return {
+			items: [
+				{ text: 'View file info...', accel: 'Alt+3 or Dblclick', enabled: !!now, action: showNowFileInfo },
+				check('Lyrics', uiState.lyrics.open, 'Alt+Y', () => togglePanel('lyrics')),
+				SEPARATOR,
+				{ text: 'Jump to file...', accel: 'J', action: requestSearch },
+				SEPARATOR,
+				check('Autoscroll songname', uiState.marqueeScroll, '', toggleMarqueeScroll),
+				SEPARATOR,
+				now ? { text: 'Rating', items: await ratingItems([now]) } : { text: 'Rating', enabled: false }
+			]
+		};
+	}, at);
+}
+
+/**
+ * The album art's right-click menu: file info, the artwork full size, the album name under it,
+ * where it sits, and the track's link.
+ * @param {MenuAt} at
+ */
+export function showArtMenu(at) {
+	return popup(async () => {
+		const now = nowAsItem();
+		const art = uiState.art;
+		const link = now ? `https://music.youtube.com/watch?v=${now.video_id}` : '';
+		/** @type {[import('./uiState.js').ArtDock, string][]} */
+		const docks = [
+			['left', 'Left of the player'],
+			['right', 'Right of the player'],
+			['stack', 'Docked in the stack'],
+			['float', 'Floating window']
+		];
+		return {
+			items: [
+				{ text: 'View file info...', accel: 'Alt+3', enabled: !!now, action: showNowFileInfo },
+				{
+					text: 'Show full-size artwork',
+					enabled: !!now?.thumbnail,
+					// The biggest YouTube serves: 1280x720 for a video thumbnail, any size for a cover.
+					action: () => now?.thumbnail && api.openExternal(thumb(now.thumbnail, 1600) ?? now.thumbnail).catch(log('open artwork'))
+				},
+				SEPARATOR,
+				check('Show album name', art.caption, '', toggleArtCaption),
+				{
+					text: 'Placement',
+					items: [
+						...docks.map(([dock, text]) => ({
+							text: dock === 'right' && lyricsOnRight() ? 'Right of the player (lyrics are there)' : text,
+							checked: art.open && art.dock === dock,
+							enabled: !(dock === 'right' && lyricsOnRight()),
+							action: () => placeArt(dock)
+						})),
+						SEPARATOR,
+						{ text: 'Hide', action: () => placeArt(null) }
+					]
+				},
+				SEPARATOR,
+				{ text: 'Copy link', enabled: !!now, action: () => copyText(link).then(() => flashMarquee('Link copied'), log('copy link')) },
+				{ text: 'Open in YouTube Music', enabled: !!now, action: () => api.openExternal(link).catch(log('open link')) }
+			]
+		};
+	}, at);
+}
+
+/**
+ * The analyzer's right-click menu, after Winamp's visualization one: the plug-in (MilkDrop,
+ * Butterchurn, the only one here), then the main window's own analyzer modes.
+ * @param {MenuAt} at
+ */
+export function showVisMenu(at) {
 	return popup(
 		async () => ({
 			items: [
-				{ text: 'Play', action: () => playResult(index).catch(log('play')) },
-				{ text: 'Play next', action: () => queueResult(index, true).catch(log('play next')) },
-				{ text: 'Add to queue', action: () => queueResult(index, false).catch(log('add to queue')) }
+				{ text: 'Start/Stop plug-in', accel: 'Ctrl+Shift+K', action: toggleMilkdrop },
+				{ text: 'Configure plug-in...', enabled: false },
+				{ text: 'Select plug-in...', enabled: false },
+				SEPARATOR,
+				check('Run the plug-in on start-up', uiState.milkdropOnStart, '', toggleMilkdropOnStart),
+				SEPARATOR,
+				check('MilkDrop (Butterchurn)', uiState.milkdrop, '', toggleMilkdrop),
+				SEPARATOR,
+				check('Spectrum analyser', uiState.visMode === 'analyzer', '', () => uiState.visMode !== 'analyzer' && toggleVisualizer()),
+				check('Off', uiState.visMode === 'off', '', () => uiState.visMode !== 'off' && toggleVisualizer())
 			]
 		}),
 		at
@@ -168,9 +363,104 @@ export function showResultMenu(index, at) {
 }
 
 /**
- * The playlist's bottom buttons, one short menu each. LIST
- * loads a playlist (some skins label it LOAD LIST); SEL, which has no selection to work on here,
- * saves the queue as one.
+ * A playlist row's right-click menu, in real Winamp's order (Play; Remove selected, Crop to
+ * selected; View file info), with what the queue can do.
+ * @param {number} index the row clicked
+ * @param {MenuAt} at
+ */
+export function showQueueRowMenu(index, at) {
+	return popup(async () => {
+		const item = playback.queue.items[index];
+		const marked = uiState.pl.marked.size;
+		return {
+			items: [
+				{ text: 'Play', accel: 'Enter', action: () => playIndex(index).catch(log('play')) },
+				SEPARATOR,
+				{ text: marked > 1 ? `Remove selected (${marked})` : 'Remove selected', accel: 'Delete', action: () => removeSelected().catch(log('remove')) },
+				{ text: 'Crop to selected', accel: 'Ctrl+Delete', action: () => cropToSelected().catch(log('crop')) },
+				SEPARATOR,
+				{ text: 'View file info...', accel: 'Alt+3', enabled: !!item, action: () => item && showFileInfo(item) },
+				SEPARATOR,
+				{ text: 'Rate items', items: await ratingItems(markedRows(uiState.pl).map((i) => playback.queue.items[i]).filter(Boolean)) }
+			]
+		};
+	}, at);
+}
+
+/**
+ * The search box's "Songs ▾" button: what to search for.
+ * @param {MenuAt} at
+ */
+export function showSearchKindMenu(at) {
+	return popup(
+		async () => ({
+			items: SEARCH_KINDS.map(([kind, text]) => ({
+				text,
+				checked: uiState.search.kind === kind,
+				action: () => setSearchKind(kind)
+			}))
+		}),
+		at
+	);
+}
+
+/**
+ * The search panel's bottom buttons: ADD plays or queues the selected results, REM clears, SEL
+ * selects, MISC sorts the results, LIST runs a recent search again.
+ * @param {'search-add' | 'search-rem' | 'search-sel' | 'search-misc' | 'search-list'} which
+ * @param {MenuAt} at
+ */
+export function showSearchMenu(which, at) {
+	const s = uiState.search;
+	return popup(async () => {
+		if (which === 'search-add') return { items: await resultItems() };
+		if (which === 'search-rem') {
+			return {
+				items: [
+					{ text: 'Clear results', enabled: s.results.length > 0, action: clearResults },
+					{ text: 'Clear search box', action: clearSearchBox }
+				]
+			};
+		}
+		if (which === 'search-misc') {
+			const some = s.results.length > 1;
+			return {
+				items: [
+					{ text: 'Sort by title', enabled: some, action: () => sortResults('title') },
+					{ text: 'Sort by artist', enabled: some, action: () => sortResults('artist') },
+					{ text: 'Sort by length', enabled: some, action: () => sortResults('length') },
+					{ text: 'Reverse', enabled: some, action: () => sortResults('reverse') }
+				]
+			};
+		}
+		if (which === 'search-list') {
+			// Fresh from disk: a floating search window keeps its own copy.
+			await loadPrefs();
+			const recent = /** @type {string[]} */ (pref('searchHistory', []));
+			return {
+				items: recent.length
+					? [
+							{ text: 'Recent searches', enabled: false },
+							...recent.map((q) => ({ text: q, action: () => searchAgain(q) })),
+							SEPARATOR,
+							{ text: 'Clear recent searches', action: () => savePref('searchHistory', []) }
+						]
+					: [{ text: 'No recent searches yet', enabled: false }]
+			};
+		}
+		return {
+			items: [
+				{ text: 'Select all', action: () => selectAll(s, s.results.length, (i) => s.results[i]?.rowKind !== 'header') },
+				{ text: 'Select none', action: () => selectNone(s) },
+				{ text: 'Invert selection', action: () => invertSelection(s, s.results.length, (i) => s.results[i]?.rowKind !== 'header') }
+			]
+		};
+	}, at);
+}
+
+/**
+ * The playlist's bottom buttons, one short menu each. SEL selects (all, none, invert), as in
+ * Winamp; LIST loads a playlist (some skins label it LOAD LIST) or saves the queue as one.
  * @param {'add' | 'rem' | 'sel' | 'misc' | 'list'} which
  * @param {MenuAt} at
  */
@@ -180,7 +470,10 @@ export function showPlaylistMenu(which, at) {
 			return {
 				items: [
 					{ text: 'Search YouTube Music', action: requestSearch },
-					{ text: 'Open YouTube URL…', action: openUrlDialog }
+					{ text: 'Open YouTube URL…', action: openUrlDialog },
+					SEPARATOR,
+					// Limusic's own Library page, in the full window, for now.
+					{ text: 'Browse library…', action: () => openInLimusic('/library').catch(log('browse library')) }
 				]
 			};
 		}
@@ -193,7 +486,38 @@ export function showPlaylistMenu(which, at) {
 			};
 		}
 		if (which === 'list') {
-			return { items: [...(await libraryItems()), SEPARATOR, { text: 'Saving the queue as a playlist is under SEL', enabled: false }] };
+			const [load, signedIn] = await Promise.all([
+				libraryItems(),
+				api
+					.getAccount()
+					.then((a) => a.signedIn)
+					.catch(() => false)
+			]);
+			return {
+				items: [
+					{ text: 'Load', items: load },
+					{
+						text: 'Save',
+						items: [
+							signedIn
+								? { text: 'Queue to my YouTube Music library', action: () => saveQueue(false).catch(log('save')) }
+								: { text: 'Queue to YouTube Music (sign in first)', enabled: false },
+							{ text: 'Queue as a local playlist', action: () => saveQueue(true).catch(log('save')) }
+						]
+					}
+				]
+			};
+		}
+		if (which === 'sel') {
+			const pl = uiState.pl;
+			const count = playback.queue.items.length;
+			return {
+				items: [
+					{ text: 'Select all', action: () => selectAll(pl, count) },
+					{ text: 'Select none', action: () => selectNone(pl) },
+					{ text: 'Invert selection', action: () => invertSelection(pl, count) }
+				]
+			};
 		}
 		if (which === 'misc') {
 			return {
@@ -204,18 +528,7 @@ export function showPlaylistMenu(which, at) {
 				]
 			};
 		}
-		const signedIn = await api
-			.getAccount()
-			.then((a) => a.signedIn)
-			.catch(() => false);
-		return {
-			items: [
-				signedIn
-					? { text: 'Save queue to my YouTube Music library', action: () => saveQueue(false).catch(log('save')) }
-					: { text: 'Save queue to YouTube Music (sign in first)', enabled: false },
-				{ text: 'Save queue as a local playlist', action: () => saveQueue(true).catch(log('save')) }
-			]
-		};
+		return { items: [] };
 	}, at);
 }
 
@@ -246,16 +559,33 @@ async function libraryItems() {
 
 /** The EQ's PRESETS button: Winamp's built-in presets, and back to flat. @param {MenuAt} at */
 export function showPresetsMenu(at) {
-	return popup(
-		async () => ({
+	return popup(async () => {
+		// Fresh from disk: the save dialog writes them from its own window.
+		await loadPrefs();
+		/** @type {{ name: string, preamp: number, bands: number[] }[]} */
+		const mine = pref('eqPresets', []);
+		const remove = (/** @type {string} */ name) => {
+			savePref('eqPresets', mine.filter((p) => p.name !== name));
+			flashMarquee(`Deleted EQ preset: ${name}`);
+		};
+		return {
 			items: [
-				...EQ_PRESETS.map(([name, preamp, bands]) => ({ text: name, action: () => applyPreset(preamp, bands) })),
+				...mine.map((p) => ({ text: p.name, action: () => applyPreset(p.preamp, p.bands) })),
+				...(mine.length ? [SEPARATOR] : []),
+				{
+					text: 'Winamp presets',
+					items: EQ_PRESETS.map(([name, preamp, bands]) => ({ text: name, action: () => applyPreset(preamp, bands) }))
+				},
+				SEPARATOR,
+				{ text: 'Save current as preset...', action: openEqPresetDialog },
+				mine.length
+					? { text: 'Delete preset', items: mine.map((p) => ({ text: p.name, action: () => remove(p.name) })) }
+					: { text: 'Delete preset', enabled: false },
 				SEPARATOR,
 				{ text: 'Reset (flat)', action: () => applyPreset(50, Array(10).fill(50)) }
 			]
-		}),
-		at
-	);
+		};
+	}, at);
 }
 
 /**
@@ -264,8 +594,35 @@ export function showPresetsMenu(at) {
  */
 export function showLyricsMenu(at) {
 	return popup(async () => {
-		const lines = lyricsNow().lyrics?.lines ?? [];
+		const lyrics = lyricsNow().lyrics;
+		const lines = lyrics?.lines ?? [];
 		const has = (/** @type {'romanized' | 'translation'} */ what) => lines.some((l) => l[what]);
+		const track = lyricsTrack();
+		const providers = track ? await api.lyricsProviders().catch(() => []) : [];
+		/** Keep `source`'s lyrics for this song (null: back to the provider order), as Limusic's picker does. */
+		const choose = (/** @type {string | null} */ source) => {
+			if (!track) return;
+			api
+				.chooseLyricsSource({ ...track, source })
+				.then((l) => {
+					pickedLyrics(l, track.videoId);
+					flashMarquee(l ? `Lyrics from ${l.source.replace(/^Source:\s*/, '')}` : 'No lyrics from there');
+				})
+				.catch((e) => flashMarquee(`Couldn't switch lyrics: ${e}`));
+		};
+		const offset = lyrics?.offset_ms ?? 0;
+		/** Move the timing by `by` ms (0: back to none), remembered for this song. */
+		const nudge = (/** @type {number} */ by) => {
+			if (!track || !lyrics) return;
+			const next = by === 0 ? 0 : Math.max(-15000, Math.min(15000, offset + by));
+			api
+				.setLyricsOffset(track.videoId, next)
+				.then(() => {
+					pickedLyrics({ ...lyrics, offset_ms: next }, track.videoId);
+					flashMarquee(`Lyrics timing: ${next > 0 ? '+' : ''}${(next / 1000).toFixed(2)}s`);
+				})
+				.catch((e) => flashMarquee(`Couldn't change the timing: ${e}`));
+		};
 		return {
 			items: [
 				{
@@ -281,7 +638,34 @@ export function showLyricsMenu(at) {
 				SEPARATOR,
 				{ text: 'Bigger text', accel: 'Ctrl+=', action: () => zoomLyrics(1) },
 				{ text: 'Smaller text', accel: 'Ctrl+-', action: () => zoomLyrics(-1) },
-				{ text: 'Normal size', accel: 'Ctrl+0', action: () => zoomLyrics(0) }
+				{ text: 'Normal size', accel: 'Ctrl+0', action: () => zoomLyrics(0) },
+				SEPARATOR,
+				track
+					? {
+							text: 'Lyrics source',
+							items: [
+								{ text: 'Automatic', checked: !!lyrics && !lyrics.pinned, action: () => choose(null) },
+								SEPARATOR,
+								...providers
+									.filter((p) => p.on)
+									.map((p) => ({
+										text: p.name,
+										checked: !!lyrics?.pinned && lyrics.provider === p.id,
+										action: () => choose(p.id)
+									}))
+							]
+						}
+					: { text: 'Lyrics source', enabled: false },
+				lyrics?.synced
+					? {
+							text: `Timing (${offset > 0 ? '+' : ''}${(offset / 1000).toFixed(2)}s)`,
+							items: [
+								{ text: 'Earlier (0.25s)', action: () => nudge(-250) },
+								{ text: 'Later (0.25s)', action: () => nudge(250) },
+								{ text: 'Reset', enabled: offset !== 0, action: () => nudge(0) }
+							]
+						}
+					: { text: 'Timing', enabled: false }
 			]
 		};
 	}, at);
@@ -294,7 +678,8 @@ export function showLyricsMenu(at) {
  *   autoSeconds: number, setAutoSeconds: (s: number) => void, preset: string,
  *   toggleFullscreen: () => Promise<void>, close: () => void,
  *   presetOsd: OsdMode, trackOsd: OsdMode, setPresetOsd: (m: OsdMode) => void,
- *   setTrackOsd: (m: OsdMode) => void, browse: () => void }} controls
+ *   setTrackOsd: (m: OsdMode) => void, browse: () => void, artOverlay: boolean,
+ *   toggleArtOverlay: () => void }} controls
  * @param {MenuAt} at
  */
 export function showMilkdropMenu(controls, at) {
@@ -326,6 +711,7 @@ export function showMilkdropMenu(controls, at) {
 				SEPARATOR,
 				{ text: 'Visualization Preset OSD', items: osdItems(controls.presetOsd, controls.setPresetOsd) },
 				{ text: 'Track Info OSD', items: osdItems(controls.trackOsd, controls.setTrackOsd) },
+				{ text: 'Album art overlay', checked: controls.artOverlay, action: () => controls.toggleArtOverlay() },
 				SEPARATOR,
 				{ text: 'Fullscreen', accel: 'F', action: () => controls.toggleFullscreen().catch(log('fullscreen')) },
 				{ text: 'Close', accel: 'Ctrl+Shift+K', action: () => controls.close() }
@@ -349,6 +735,9 @@ function osdItems(current, set) {
 	return modes.map(([mode, text]) => ({ text, checked: current === mode, action: () => set(mode) }));
 }
 
+/** A ticked-or-not menu item. @param {string} text @param {boolean} on @param {string} accel @param {() => unknown} action */
+const check = (text, on, accel, action) => ({ text, checked: on, accel, action });
+
 /** @param {number} preamp @param {number[]} bands */
 function applyPreset(preamp, bands) {
 	uiState.eq.preamp = preamp;
@@ -357,7 +746,7 @@ function applyPreset(preamp, bands) {
 }
 
 /** About ytminamp: the version and who it stands on. */
-async function showAbout() {
+export async function showAbout() {
 	const version = await getVersion().catch(() => '?');
 	await message(
 		`YTMinamp (limusic) ${version} (ytminamp.${YTMINAMP_RELEASE})\n\n` +
@@ -430,8 +819,6 @@ export function showMainMenu(switchSkin, at) {
 			['all', 'All'],
 			['one', 'Track']
 		];
-		/** @param {string} text @param {boolean} on @param {string} accel @param {() => unknown} action */
-		const check = (text, on, accel, action) => ({ text, checked: on, accel, action });
 		return {
 			items: [
 				{ text: 'About ytminamp…', action: () => showAbout().catch(log('about')) },
@@ -451,6 +838,7 @@ export function showMainMenu(switchSkin, at) {
 				check('Album Art', art.open, 'Alt+A', () => togglePanel('art')),
 				check('Lyrics', uiState.lyrics.open, 'Alt+Y', () => togglePanel('lyrics')),
 				SEPARATOR,
+				check('Always start in Winamp mode', uiState.startInWinamp, '', toggleStartInWinamp),
 				{
 					text: 'Options',
 					items: [

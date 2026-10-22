@@ -84,6 +84,28 @@ export function lyricsNow() {
 	return current;
 }
 
+/** What the lyrics are for, as Limusic's source picker wants it (LyricsSourcePicker's `track`). */
+export function lyricsTrack() {
+	const now = playback.now;
+	if (!now) return null;
+	return {
+		videoId: now.videoId,
+		title: now.title,
+		artists: now.artists,
+		album: now.album ?? undefined,
+		duration: seconds(now.duration) ?? (playback.duration > 0 ? playback.duration : undefined)
+	};
+}
+
+/**
+ * Lyrics the source picker (or the panel's menu) chose: shown if the song hasn't moved on.
+ * @param {api.Lyrics | null} lyrics @param {string} videoId
+ */
+export function pickedLyrics(lyrics, videoId) {
+	if (videoId !== requested) return;
+	current = !lyrics ? { status: 'missing', lyrics: null } : { status: lyrics.instrumental ? 'instrumental' : 'ready', lyrics };
+}
+
 /** Where the song is now, in ms, between the position ticks (they land at about 4 Hz). */
 function positionMs() {
 	const drift = playback.paused ? 0 : (performance.now() - playback.positionAt) / 1000;

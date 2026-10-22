@@ -1,8 +1,10 @@
 import { NUMBERS, NUMS_EX, TIME_MINUS_POS, TIME_MINUTE_TENS_POS, TIME_MINUTE_UNITS_POS, TIME_SECOND_TENS_POS, TIME_SECOND_UNITS_POS } from "./sprites.js";
 
 /**
- * Draws the MM:SS time display. Prefers `numbers.bmp`, falls back to `nums_ex.bmp` — real skins
- * ship either one, the other, or both (confirmed against the 3 fixture skins in `crates/skin`).
+ * Draws the MM:SS time display. Prefers `nums_ex.bmp`, falls back to `numbers.bmp`, as Winamp and
+ * Webamp do (Skin.tsx's numExIsUsed): real skins ship either one, the other, or both, and where
+ * both differ the nums_ex one is what Winamp shows (Windows 98.wsz: blue-boxed numbers.bmp,
+ * black nums_ex.bmp).
  * @param {CanvasRenderingContext2D} ctx
  * @param {ImageBitmap | undefined} numbers
  * @param {ImageBitmap | undefined} numsEx
@@ -10,14 +12,15 @@ import { NUMBERS, NUMS_EX, TIME_MINUS_POS, TIME_MINUTE_TENS_POS, TIME_MINUTE_UNI
  * @param {boolean} negative time-remaining mode: a minus sign before the digits
  */
 export function drawTimeDigits(ctx, numbers, numsEx, totalSeconds, negative = false) {
-  const sheet = numbers ?? numsEx;
-  const table = numbers ? NUMBERS : NUMS_EX;
+  const ex = Boolean(numsEx);
+  const sheet = numsEx ?? numbers;
+  const table = ex ? NUMS_EX : NUMBERS;
   if (!sheet) return;
 
   if (negative) {
     // numbers.bmp's minus is a 5x1 dash halfway down; nums_ex.bmp's is a full 9x13 glyph.
     const r = table.minus;
-    const y = numbers ? TIME_MINUS_POS.y : TIME_MINUS_POS.y - 6;
+    const y = ex ? TIME_MINUS_POS.y - 6 : TIME_MINUS_POS.y;
     ctx.drawImage(sheet, r.x, r.y, r.w, r.h, TIME_MINUS_POS.x, y, r.w, r.h);
   }
 

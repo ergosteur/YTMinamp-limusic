@@ -114,11 +114,15 @@ export function artFrame(sprites) {
  * @param {ArtFrame} frame
  * @param {{ width?: number, height?: number }} fit
  */
-export function artSize(frame, fit) {
+export function artSize(frame, fit, caption = false) {
 	const i = INSET[frame];
-	const side = fit.width !== undefined ? fit.width - i.left - i.right : (fit.height ?? 0) - i.top - i.bottom;
-	return { w: side + i.left + i.right, h: side + i.top + i.bottom };
+	const cap = caption ? ART_CAPTION_H : 0;
+	const side = fit.width !== undefined ? fit.width - i.left - i.right : (fit.height ?? 0) - i.top - i.bottom - cap;
+	return { w: side + i.left + i.right, h: side + i.top + i.bottom + cap };
 }
+
+/** The album name strip under the picture (the art's right-click menu: Show album name). */
+export const ART_CAPTION_H = 14;
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -138,8 +142,10 @@ function blit(ctx, sheet, r, dx, dy, w = r.w, sx = 0) {
  * @param {HTMLImageElement | null} image the cover, loaded; null for none yet
  * @param {Rect} at the whole frame, in canvas pixels
  * @param {boolean} closePressed
+ * @param {{ text: string, pledit: { font?: string, normal?: string, normalBg?: string } } | null} [caption]
+ *   the album name to show under the picture (artSize made room for it), or none
  */
-export function drawAlbumArt(ctx, sprites, image, at, closePressed) {
+export function drawAlbumArt(ctx, sprites, image, at, closePressed, caption = null) {
 	const frame = artFrame(sprites);
 	const i = INSET[frame];
 	const { x, y, w, h } = at;
@@ -150,7 +156,8 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed) {
 	ctx.clip();
 
 	// Picture first: cropped to a centred square, since video thumbnails are 16:9.
-	const inner = { x: x + i.left, y: y + i.top, w: w - i.left - i.right, h: h - i.top - i.bottom };
+	const cap = caption ? ART_CAPTION_H : 0;
+	const inner = { x: x + i.left, y: y + i.top, w: w - i.left - i.right, h: h - i.top - i.bottom - cap };
 	ctx.fillStyle = '#000000';
 	ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
 	if (image && image.naturalWidth > 0) {
@@ -158,6 +165,23 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed) {
 		const sx = (image.naturalWidth - side) / 2;
 		const sy = (image.naturalHeight - side) / 2;
 		ctx.drawImage(image, sx, sy, side, side, inner.x, inner.y, inner.w, inner.h);
+	}
+	if (caption) {
+		// In the playlist's font and colours: a canvas font, so any script shows (text.bmp is A-Z).
+		const strip = { x: inner.x, y: inner.y + inner.h, w: inner.w, h: cap };
+		ctx.fillStyle = caption.pledit.normalBg ?? '#000000';
+		ctx.fillRect(strip.x, strip.y, strip.w, strip.h);
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(strip.x, strip.y, strip.w, strip.h);
+		ctx.clip();
+		ctx.font = `11px ${caption.pledit.font ? `"${caption.pledit.font}", ` : ''}Arial, sans-serif`;
+		ctx.fillStyle = caption.pledit.normal ?? '#00ff00';
+		ctx.textBaseline = 'middle';
+		const fits = ctx.measureText(caption.text).width <= strip.w - 4;
+		ctx.textAlign = fits ? 'center' : 'left';
+		ctx.fillText(caption.text, fits ? strip.x + strip.w / 2 : strip.x + 2, strip.y + strip.h / 2 + 1);
+		ctx.restore();
 	}
 
 	drawFrame(ctx, sprites, at, closePressed, w >= 90 ? 'album art' : 'art', isLit('art'));

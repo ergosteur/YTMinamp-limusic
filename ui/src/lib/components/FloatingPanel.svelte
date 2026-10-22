@@ -23,15 +23,26 @@
 	import { attachInput } from '../skin/input.js';
 	import { setActivePart } from '../skin/focus.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
-	import { LYRICS_ZOOM_EVENT, SEARCH_INPUT_ID, flashSearch, followQueue, loadSkin, playIndex, searchKeydown } from '../skin/skinApi.js';
-	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showResultMenu } from '../skin/menu.js';
+	import {
+		LYRICS_ZOOM_EVENT,
+		SEARCH_INPUT_ID,
+		fileInfoForSelection,
+		flashSearch,
+		followQueue,
+		loadSkin,
+		playIndex,
+		searchKeydown
+	} from '../skin/skinApi.js';
+	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics } from '../skin/render/lyrics.js';
+	import { drawLyrics, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
+	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { artFrame } from '../skin/render/albumArt.js';
 	import { lyricsNow, sungLine } from '../skin/lyrics.js';
 	import { attachKeys } from '../skin/keys.js';
 	import { loadPrefs, pref, savePref } from '../skin/prefs.js';
-	import { removeSelected } from '../skin/playlistActions.js';
+	import { cropToSelected, removeSelected } from '../skin/playlistActions.js';
 	import { uiState } from '../skin/uiState.js';
 
 	/** @type {{ kind: 'playlist' | 'search' | 'eq' | 'lyrics' }} */
@@ -45,6 +56,10 @@
 	let sprites = new Map();
 	/** @type {import('$lib/api').SkinPayload['pledit']} */
 	let pledit = $state({});
+	/** The search box's "Songs ▾" button label. */
+	let kindText = $state('Songs');
+	/** Where the lyrics footer goes (render/lyrics.js keeps the strip), once drawn. */
+	let footerRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
 
 	const size = () => ({ w: window.innerWidth, h: window.innerHeight });
 	/** Ask the Winamp window to dock this panel back (`'stack'`, lyrics `'right'`) or hide it (null). */
@@ -62,10 +77,14 @@
 		// The EQ's settings live in the remembered prefs, shared with the Winamp window.
 		if (kind === 'eq') loadPrefs().then(() => Object.assign(uiState.eq, pref('eq', {})));
 		if (kind === 'lyrics') loadPrefs().then(() => (uiState.lyrics.zoom = pref('lyricsZoom', 1)));
+		if (kind === 'search') loadPrefs().then(() => (uiState.search.kind = pref('searchKind', 'songs')));
 		const detachKeys = attachKeys((action) => {
-			// Delete/Enter work on this playlist's own selection.
-			if (kind !== 'playlist' || (action !== 'remove' && action !== 'playSelected')) return false;
+			// File info for this window's own selection.
+			if (action === 'fileInfo') return (fileInfoForSelection(), true);
+			// Delete/Ctrl+Delete/Enter work on this playlist's own selection.
+			if (kind !== 'playlist' || (action !== 'remove' && action !== 'crop' && action !== 'playSelected')) return false;
 			if (action === 'remove') removeSelected().catch(() => {});
+			else if (action === 'crop') cropToSelected().catch(() => {});
 			else if (uiState.pl.selected !== null) playIndex(uiState.pl.selected).catch(() => {});
 			return true;
 		});
@@ -98,11 +117,21 @@
 				const shown =
 					target.kind === 'result'
 						? showResultMenu(target.index, at)
+						: target.kind === 'queueRow'
+							? showQueueRowMenu(target.index, at)
+							: target.kind === 'art'
+								? showArtMenu(at)
+								: target.kind === 'title'
+									? showTitleMenu(at)
+								: target.kind === 'vis'
+									? showVisMenu(at)
 						: target.kind === 'presets'
 							? showPresetsMenu(at)
 							: target.kind === 'lyrics'
 								? showLyricsMenu(at)
-								: showPlaylistMenu(target.kind, at);
+								: target.kind.startsWith('search-')
+									? showSearchMenu(/** @type {any} */ (target.kind), at)
+								: showPlaylistMenu(/** @type {import('../skin/render/playlist.js').PlaylistButton} */ (target.kind), at);
 				shown.catch((e) => console.error('menu failed', e));
 			},
 			closePanel: () => dockTo(null),
@@ -154,6 +183,7 @@
 
 		const stopLoop = startRenderLoop(() => {
 			if (sprites.size === 0) return;
+			if (kind === 'search' && kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
 			const ctx = canvas.getContext('2d');
 			if (!ctx) return;
 			const { w, h } = size();
@@ -175,6 +205,8 @@
 				const state = lyricsNow();
 				const sung = state.lyrics ? sungLine(state.lyrics) : -1;
 				drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, { x: 0, y: 0, w, h }, uiState.lyrics.closePressed, uiState.lyrics.zoom);
+				const r = lyricsFooterRect(sprites, { x: 0, y: 0, w, h });
+				if (!footerRect || r.x !== footerRect.x || r.y !== footerRect.y || r.w !== footerRect.w) footerRect = r;
 			}
 		});
 
@@ -202,7 +234,7 @@
 			class="absolute m-0 border px-1 py-0 text-[11px] leading-none outline-none"
 			style:left="{list.x}px"
 			style:top="{list.y}px"
-			style:width="calc(100vw - {list.x + 20}px)"
+			style:width="calc(100vw - {list.x + 20 + KIND_BUTTON_W}px)"
 			style:height="{SEARCH_INPUT_H - 2}px"
 			style:background={pledit.normalBg ?? '#000000'}
 			style:color={pledit.normal ?? '#00ff00'}
@@ -215,5 +247,25 @@
 			autocomplete="off"
 			onkeydown={onSearchKey}
 		/>
+		<button
+			type="button"
+			class="absolute m-0 border px-1 py-0 text-left text-[11px] leading-none outline-none"
+			style:left="calc(100vw - {20 + KIND_BUTTON_W}px)"
+			style:top="{list.y}px"
+			style:width="{KIND_BUTTON_W}px"
+			style:height="{SEARCH_INPUT_H - 2}px"
+			style:background={pledit.normalBg ?? '#000000'}
+			style:color={pledit.current ?? '#ffffff'}
+			style:border-color={pledit.normal ?? '#00ff00'}
+			style:font-family={`${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`}
+			title="What to search for"
+			onclick={(e) => {
+				const r = e.currentTarget.getBoundingClientRect();
+				showSearchKindMenu({ x: r.left, y: r.bottom }).catch((err) => console.error('menu failed', err));
+			}}>{kindText} ▾</button
+		>
+	{/if}
+	{#if kind === 'lyrics' && footerRect}
+		<WinampLyricsFooter rect={footerRect} {pledit} />
 	{/if}
 </div>

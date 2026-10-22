@@ -32,9 +32,13 @@ export function savePref(key, value) {
 	cache[key] = value;
 	pending[key] = value;
 	clearTimeout(timer);
-	timer = setTimeout(() => {
-		const patch = pending;
-		pending = {};
-		api.setWinampPrefs(patch).catch((e) => console.error('saving winamp prefs failed', e));
-	}, 400);
+	timer = setTimeout(() => flushPrefs().catch((e) => console.error('saving winamp prefs failed', e)), 400);
+}
+
+/** Write what's waiting now, for a window about to close. */
+export function flushPrefs() {
+	clearTimeout(timer);
+	const patch = pending;
+	pending = {};
+	return Object.keys(patch).length ? api.setWinampPrefs(patch) : Promise.resolve();
 }

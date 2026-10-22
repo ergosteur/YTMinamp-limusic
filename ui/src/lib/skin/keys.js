@@ -21,17 +21,18 @@ import {
 	toggleAlwaysOnTop,
 	toggleDoubleSize,
 	togglePanel,
+	fileInfoForSelection,
 	toggleMilkdrop,
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
 import { toggleTimeRemaining } from './input.js';
-import { removeSelected } from './playlistActions.js';
+import { cropToSelected, removeSelected } from './playlistActions.js';
 import { uiState } from './uiState.js';
 
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
- *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop'} KeyAction */
+ *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'} KeyAction */
 
 /**
  * The action a key press means, or null if it isn't one of ours.
@@ -43,7 +44,7 @@ function actionFor(e) {
 	const ctrl = e.ctrlKey || e.metaKey;
 	const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 	if (e.altKey && !ctrl && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics' })[key] ?? null;
+		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', 3: 'fileInfo' })[key] ?? null;
 	}
 	// Lyrics text size, the keys Limusic zooms its own window with. Shift allowed: `+` is
 	// Shift+= on many layouts. The numpad's +, - and 0 give the same keys.
@@ -54,7 +55,7 @@ function actionFor(e) {
 	// Winamp's start/stop visualization plugin.
 	if (ctrl && e.shiftKey && !e.altKey && key === 'k') return 'milkdrop';
 	if (ctrl && !e.altKey && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ l: 'url', a: 'onTop', 2: 'double', t: 'time' })[key] ?? null;
+		return /** @type {Record<string, KeyAction>} */ ({ l: 'url', a: 'onTop', 2: 'double', t: 'time', Delete: 'crop' })[key] ?? null;
 	}
 	if (ctrl || e.altKey || e.shiftKey) return null;
 	return (
@@ -111,6 +112,11 @@ export function runKey(action) {
 			return;
 		case 'milkdrop':
 			return toggleMilkdrop();
+		case 'fileInfo':
+			return fileInfoForSelection();
+		case 'crop':
+			if (uiState.pl.open) cropToSelected().catch(log('crop'));
+			return;
 		case 'remove':
 			if (uiState.pl.open) removeSelected().catch(log('remove'));
 			return;

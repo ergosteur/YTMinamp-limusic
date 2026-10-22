@@ -5,6 +5,8 @@ import { drawFrame, artFrame, frameInset } from './albumArt.js';
 import { lyricsShow } from '../lyrics.js';
 import { isLit } from '../focus.js';
 
+/** The strip along the bottom kept for the "Lyrics from ..." footer (WinampLyricsFooter.svelte). */
+export const LYRICS_FOOTER_H = 16;
 /** At zoom 1: the playlist editor's text size. */
 const LINE_H = 15;
 const FONT_PX = 11;
@@ -66,10 +68,11 @@ function wrap(ctx, lines, width, fonts) {
 export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePressed, zoom) {
 	const lineH = LINE_H * zoom;
 	const i = frameInset(artFrame(sprites));
-	const inner = { x: at.x + i.left, y: at.y + i.top, w: at.w - i.left - i.right, h: at.h - i.top - i.bottom };
+	const inner = { x: at.x + i.left, y: at.y + i.top, w: at.w - i.left - i.right, h: at.h - i.top - i.bottom - LYRICS_FOOTER_H };
 	ctx.save();
 	ctx.fillStyle = pledit.normalBg ?? '#000000';
-	ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
+	// The footer strip too: its HTML sits on top, see-through.
+	ctx.fillRect(inner.x, inner.y, inner.w, inner.h + LYRICS_FOOTER_H);
 	ctx.beginPath();
 	ctx.rect(inner.x, inner.y, inner.w, inner.h);
 	ctx.clip();
@@ -118,6 +121,15 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 	}
 	ctx.restore();
 	drawFrame(ctx, sprites, at, closePressed, 'lyrics', isLit('lyrics'));
+}
+
+/**
+ * Where the footer goes in a lyrics panel at `at` (canvas px), for the HTML laid over it.
+ * @param {Map<string, ImageBitmap>} sprites @param {Rect} at
+ */
+export function lyricsFooterRect(sprites, at) {
+	const i = frameInset(artFrame(sprites));
+	return { x: at.x + i.left, y: at.y + at.h - i.bottom - LYRICS_FOOTER_H, w: at.w - i.left - i.right, h: LYRICS_FOOTER_H };
 }
 
 /** Rows the panel scrolls by per wheel notch. */

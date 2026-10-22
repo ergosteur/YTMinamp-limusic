@@ -958,7 +958,9 @@ pub fn run() {
                 if !should_start_minimized(&db) {
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(2)).await;
-                        if !w.is_visible().unwrap_or(true) {
+                        // Started in Winamp mode: the hidden main window is the point there too.
+                        let winamp = w.app_handle().get_webview_window(winamp::LABEL).is_some();
+                        if !winamp && !w.is_visible().unwrap_or(true) {
                             let _ = w.show();
                         }
                     });

@@ -966,6 +966,11 @@ pub async fn show_main(state: St<'_>, window: tauri::WebviewWindow) -> Result<bo
     if crate::should_start_minimized(&state.db) {
         return Ok(false);
     }
+    // "Always start in Winamp mode": the Winamp window instead, the main one staying hidden.
+    if crate::winamp::start_in_winamp(window.app_handle()) {
+        open_winamp(window.app_handle().clone()).await?;
+        return Ok(false);
+    }
     window.show().map_err(|e| e.to_string())?;
     window.unminimize().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
