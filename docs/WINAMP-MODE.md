@@ -485,15 +485,10 @@ error and the app aborts.
 
 ## Publishing
 
-Development happens in a private repository with the full history; the public fork,
-[ergosteur/YTMinamp-limusic](https://github.com/ergosteur/YTMinamp-limusic), gets a squashed
-snapshot per sync on its `ytminamp` branch (its `master` stays upstream Limusic).
-`scripts/publish-github.sh` exports the committed tree (`git archive`, so nothing uncommitted
-or ignored can leak), mirrors it into a clone of the fork and commits; it never pushes. Private
-files (the backlog, notes for coding agents) are left out of both the tree and the commit message
-(only commits that change something published contribute theirs), and it refuses to publish if
-either names a private host or address; `PUBLISH_MESSAGE=<file>` supplies a message instead.
-Edit in the private repository: the clone is overwritten on every sync.
+Development happens in a private git repository, synced to
+[ergosteur/YTMinamp-limusic](https://github.com/ergosteur/YTMinamp-limusic), a GitHub fork of
+Limusic: its `ytminamp` branch (the default) carries Winamp mode, one commit per sync, and its
+`master` stays upstream Limusic.
 
 ### Releases
 
@@ -514,12 +509,18 @@ Limusic version changes. On Windows the setup .exe upgrades in place either way.
 Builds are unsigned and there's no updater (its endpoints are emptied in `tauri.conf.json`), so a
 release is just installers:
 
-1. `scripts/set-ytminamp-release.py N`, commit. Publish and push the `ytminamp` branch, then
-   `gh release create <tag> --target <sha> --prerelease` on the fork.
-2. `gh workflow run ytminamp-{linux,windows,macos}.yml --ref ytminamp -f tag=<tag>`: AppImage +
-   deb, NSIS + MSI, Apple Silicon DMG, each attached to the release by its own run.
-3. The RPM is built here, `scripts/build-fedora.sh rpm`, and attached with
-   `gh release upload`.
+1. `scripts/set-ytminamp-release.py N`, and commit it to `ytminamp`.
+2. `gh release create <tag> --target <sha> --prerelease`, with the notes: a pre-release until its
+   installers are attached, so nobody sees a Latest release with nothing to download.
+3. `gh workflow run ytminamp-{linux,windows,macos}.yml --ref ytminamp -f tag=<tag>`: AppImage + deb,
+   NSIS + MSI, Apple Silicon DMG, each attached to the release by its own run.
+4. The RPM, built on Fedora while those run: `scripts/build-fedora.sh rpm`, then
+   `gh release upload <tag> dist/ytminamp-<version>-<N>.x86_64.rpm`.
+5. Once all six installers are on the release, `gh release edit <tag> --prerelease=false --latest`.
+   The app's update check only counts full releases, so this is what tells people on older builds.
+
+If a workflow fails, fix it and re-run that one (`gh run rerun <id> --failed`, or dispatch it
+again) before step 5.
 
 The three workflows are generated from upstream's release workflows by
 `scripts/make-release-workflows.py` (tag check, no signing or `latest.json`, our names, a plain
