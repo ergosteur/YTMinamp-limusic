@@ -572,8 +572,10 @@ export function nowAsItem() {
 	const now = playback.now;
 	if (!now) return null;
 	// The queue's own row when it's this track: it carries more (the album's id, the play count).
+	// Its title and artist from what's playing, though: Limusic fills a missing artist in there
+	// once the track plays (a search for the artist leaves it out of the rows), not in the row.
 	const row = playback.queue.items[playback.queue.currentIndex];
-	if (row?.video_id === now.videoId) return row;
+	if (row?.video_id === now.videoId) return { ...row, title: now.title || row.title, artists: now.artists || row.artists };
 	return {
 		video_id: now.videoId,
 		title: now.title,

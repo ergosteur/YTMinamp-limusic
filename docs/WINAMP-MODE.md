@@ -200,9 +200,9 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 
 | Right-click | Menu |
 |---|---|
-| A playlist row | Play; Remove selected (Delete), Crop to selected (Ctrl+Delete); View file info... (Alt+3); Rate items ▸ |
-| A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸ |
-| The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸ |
+| A playlist row | Play, Play next (moves it up), Add to queue (another copy at the end); Remove selected (Delete), Crop to selected (Ctrl+Delete); View file info... (Alt+3); Rate items ▸; then Limusic's: Start radio, Go to artist, Go to album, Copy link, Open in YouTube Music |
+| A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸; then Limusic's: Start radio (songs, albums, playlists), Go to artist / album (songs), Copy link, Open in YouTube Music |
+| The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸; then Limusic's, for the playing track |
 | The analyzer | Start/Stop plug-in (Ctrl+Shift+K, MilkDrop); Run the plug-in on start-up; the plug-in list (MilkDrop); Spectrum analyser / Off |
 | The Stop button | Stop (V), Stop w/ fadeout (Shift+V), Stop after current (Ctrl+V; Ctrl+click Stop does it too) |
 | File info | Bigger text, Smaller text, Normal size; Copy link, Open in browser |
@@ -211,6 +211,10 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 
 Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
 title, then artist, album and length, a line each.
+
+Winamp's own entries come first, in its order; what Limusic adds follows in a group of its own.
+Go to artist / album open Limusic's window at that page (the media library, as far as Winamp mode
+goes). Limusic's Share lives in its own window, so here it's Copy link and Open in YouTube Music.
 
 A right-click inside a selection acts on all of it; outside, it selects that row first. Rate
 items ▸ (Rating ▸ on the title) holds Like / Dislike / No rating, Add to (or Remove from) library,

@@ -67,13 +67,28 @@ export async function searchRows(kind, query) {
 	const all = await api.searchAll(query, true);
 	/** @type {[string, api.BrowseItem[]][]} */
 	const sections = [
-		['Top result', all.top],
+		['Top result', byTopArtist(all.top)],
 		['Songs', all.songs],
 		['Albums', all.albums],
 		['Artists', all.artists],
 		['Playlists', all.playlists]
 	];
 	return sections.filter(([, items]) => items.length).flatMap(([title, items]) => [header(title), ...items.map(rowOf)]);
+}
+
+/**
+ * The top result's songs, their artist filled in from the artist card above them where YouTube
+ * left it out: it does when the query is that artist (Limusic only fills it in once the song plays,
+ * so a song queued from here would sit in the playlist with no artist).
+ * @param {api.BrowseItem[]} top the card first, then its rows
+ */
+function byTopArtist(top) {
+	const card = top[0];
+	if (card?.kind !== 'artist') return top;
+	const run = { text: card.title, id: card.id };
+	return top.map((item) =>
+		item.kind === 'song' && !item.subtitle ? { ...item, subtitle: card.title, artistRuns: [run] } : item
+	);
 }
 
 /** Play `row` as a click in Limusic would. @param {SearchRow | undefined} row */

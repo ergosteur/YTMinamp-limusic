@@ -20,6 +20,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import * as api from '$lib/api';
 import {
 	addSongsToPlaylists,
+	enqueue,
 	inSongLibrary,
 	playback,
 	ratingOf,
@@ -224,7 +225,8 @@ async function resultItems(index = null) {
 		SEPARATOR,
 		rows.some((i) => isSongRow(results[i]))
 			? { text: 'Rate items', items: await ratingItems(rows.map((i) => results[i]).filter(isSongRow)) }
-			: { text: 'Rate items', enabled: false }
+			: { text: 'Rate items', enabled: false },
+		...itemExtras(results[index ?? rows[0]])
 	];
 }
 
@@ -285,7 +287,8 @@ export function showTitleMenu(at) {
 				SEPARATOR,
 				check('Autoscroll songname', uiState.marqueeScroll, '', toggleMarqueeScroll),
 				SEPARATOR,
-				now ? { text: 'Rating', items: await ratingItems([now]) } : { text: 'Rating', enabled: false }
+				now ? { text: 'Rating', items: await ratingItems([now]) } : { text: 'Rating', enabled: false },
+				...itemExtras(now ?? undefined)
 			]
 		};
 	}, at);
@@ -421,19 +424,90 @@ export function showQueueRowMenu(index, at) {
 	return popup(async () => {
 		const item = playback.queue.items[index];
 		const marked = uiState.pl.marked.size;
+		const rows = markedRows(uiState.pl);
+		const n = rows.length > 1 ? ` (${rows.length})` : '';
 		return {
 			items: [
 				{ text: 'Play', accel: 'Enter', action: () => playIndex(index).catch(log('play')) },
+				{ text: `Play next${n}`, action: () => playRowsNext(rows).catch(log('play next')) },
+				{ text: `Add to queue${n}`, action: () => queueRowsAgain(rows).catch(log('add to queue')) },
 				SEPARATOR,
 				{ text: marked > 1 ? `Remove selected (${marked})` : 'Remove selected', accel: 'Delete', action: () => removeSelected().catch(log('remove')) },
 				{ text: 'Crop to selected', accel: 'Ctrl+Delete', action: () => cropToSelected().catch(log('crop')) },
 				SEPARATOR,
 				{ text: 'View file info...', accel: 'Alt+3', enabled: !!item, action: () => item && showFileInfo(item) },
 				SEPARATOR,
-				{ text: 'Rate items', items: await ratingItems(markedRows(uiState.pl).map((i) => playback.queue.items[i]).filter(Boolean)) }
+				{ text: 'Rate items', items: await ratingItems(markedRows(uiState.pl).map((i) => playback.queue.items[i]).filter(Boolean)) },
+				...itemExtras(item)
 			]
 		};
 	}, at);
+}
+
+/**
+ * Play next for playlist rows, as Limusic's queue does it: a row still to come moves up (one it
+ * queued itself it moves on its own; any other comes out first and goes back in), and a row
+ * already played is queued again.
+ * @param {number[]} rows in list order
+ */
+async function playRowsNext(rows) {
+	const q = playback.queue;
+	const items = rows.map((i) => q.items[i]).filter(Boolean);
+	// Last first, so the indices still to remove stay valid.
+	for (const i of [...rows].reverse()) {
+		const row = q.items[i];
+		if (row && i > q.currentIndex && !row.queued && !row.queued_end) await api.removeFromQueue(i);
+	}
+	await enqueue(items, true);
+	flashMarquee(items.length > 1 ? `Playing next: ${items.length} tracks` : 'Playing next');
+}
+
+/** Add to queue for playlist rows: another copy at the end, as Limusic's queue does. @param {number[]} rows */
+async function queueRowsAgain(rows) {
+	const items = rows.map((i) => playback.queue.items[i]).filter(Boolean);
+	await enqueue(items, false);
+	flashMarquee(items.length > 1 ? `Added to queue: ${items.length} tracks` : 'Added to queue');
+}
+
+/**
+ * The entries Limusic has for a song or a search result that Winamp has no word for, as a group
+ * at the end of its menu: Start radio, Go to artist / album (in Limusic's window, the media library
+ * here), and its link (Limusic's Share, which only its own window has). For the row clicked.
+ * @param {import('./searchKinds.js').SearchRow | import('$lib/api').SongItem | undefined} item
+ */
+function itemExtras(item) {
+	if (!item) return [];
+	const browse = /** @type {import('./searchKinds.js').SearchRow} */ (item).browse;
+	const link = /** @type {import('./searchKinds.js').SearchRow} */ (item).link ?? (item.video_id ? `https://music.youtube.com/watch?v=${item.video_id}` : '');
+	/** @type {(() => Promise<void>) | null} An artist's is its Play radio already. */
+	const radio =
+		browse?.kind === 'album' || browse?.kind === 'playlist'
+			? () => api.startRadio(/** @type {'album' | 'playlist'} */ (browse.kind), browse.id, browse.title)
+			: !browse && item.video_id
+				? () => api.startRadio('song', item.video_id, item.title)
+				: null;
+	const out = [];
+	if (radio) {
+		out.push({
+			text: 'Start radio',
+			action: () => radio().then(() => flashMarquee('Radio started'), (e) => flashMarquee(`No radio for this: ${e}`))
+		});
+	}
+	if (!browse && item.artist_id) {
+		const id = item.artist_id;
+		out.push({ text: 'Go to artist', action: () => openInLimusic(`/artist/${encodeURIComponent(id)}`).catch(log('go to artist')) });
+	}
+	if (!browse && item.album_id) {
+		const id = item.album_id;
+		out.push({ text: 'Go to album', action: () => openInLimusic(`/album/${encodeURIComponent(id)}`).catch(log('go to album')) });
+	}
+	if (link) {
+		out.push(
+			{ text: 'Copy link', action: () => copyText(link).then(() => flashMarquee('Link copied'), log('copy link')) },
+			{ text: 'Open in YouTube Music', action: () => api.openExternal(link).catch(log('open link')) }
+		);
+	}
+	return out.length ? [SEPARATOR, ...out] : [];
 }
 
 /**
