@@ -682,6 +682,13 @@ pub fn show_limusic_window(app: AppHandle, show: bool) -> Result<(), String> {
     done.map_err(|e| e.to_string())
 }
 
+/// The analyzer's levels, `winamp` or `linear` (what builds 5 to 7 had). The UI remembers the
+/// choice (`vizLevels`); `viz::start` reads it from there too.
+#[tauri::command]
+pub fn set_viz_levels(levels: String) {
+    crate::viz::set_linear(levels == "linear");
+}
+
 /// Whether a "stop after current" is set: every Winamp window's menus tick it from here.
 static STOP_AFTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

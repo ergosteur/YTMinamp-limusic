@@ -75,8 +75,19 @@ Winamp window opens until the app quits.
 
 The 19 bands sit on the 19 bars Winamp draws (75 columns in fours, with Webamp's mostly-logarithmic
 column mapping: 69 Hz to 20 kHz), and each band's level is scaled to what Winamp's own FFT
-(Nullsoft vis_classic, via Webamp's port) shows for it. The factors were measured with pink
-noise against a port of that FFT, and agree within a few percent on white noise. mpv filters
+(Nullsoft vis_classic, via Webamp's port) shows for it. Two mappings, picked from the analyzer's
+right-click menu (**Analyser levels**, remembered as `vizLevels`):
+
+- **Winamp** (the default): column = A × amplitude^P per bar, fitted so that on real music the
+  drawn bars match Winamp's: distributions matched per bar over 24 tracks (1960s to now, quiet to
+  loud) against that FFT port run on the same audio. Bars land within about a pixel of Winamp's
+  median, and sit at the top about as often as Winamp's do.
+- **Linear**: one linear factor per band, measured with pink noise against the same FFT port
+  (within a few percent on white noise too). Right for noise, but music fills every band-pass at
+  once, so dense mixes read about two pixels higher and pin the top two to three times as often.
+  What builds 5 to 7 showed.
+
+Both measure the music before the volume control, as Winamp's analyzer does. mpv filters
 ahead of its output buffer, so the levels are held back 0.2 s to line up with what you hear.
 Falloff and peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from the
 skin's `viscolor.txt` (stock Winamp palette for missing slots). Click the analyzer to turn it

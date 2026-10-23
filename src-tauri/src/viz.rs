@@ -53,6 +53,30 @@ const SCALE: [f64; 19] = [
     89.3, 78.1, 105.2, 128.5, 146.8, 165.6, 178.8, 190.2, 201.0, 209.2, 213.7, 213.7, 219.3, 220.4, 220.2, 218.9,
     216.6, 210.3, 160.3,
 ];
+/// The "Winamp" levels (the default): column = `FIT_A[band]` × amplitude^`FIT_P[band]`,
+/// fitted per bar so that on real music our band levels show what Winamp's own FFT does. `SCALE`
+/// alone matches it on noise, but music fills every band-pass at once and reads hotter: dense
+/// mixes sat near the top. Fitted by matching distributions (quantiles 30-99.5%) per bar over 24
+/// tracks, 1960s to now, quiet to loud, against a port of that FFT run on the same audio: drawn
+/// bars now land within about a pixel of Winamp's median, where `SCALE` alone was two high and at
+/// the top two to three times as often.
+const FIT_A: [f64; 19] = [
+    73.8, 84.7, 135.9, 198.9, 221.6, 220.5, 220.8, 210.5, 235.5, 252.0, 306.1, 310.1, 337.3, 380.9, 599.6, 508.6,
+    511.5, 605.6, 3113.8,
+];
+const FIT_P: [f64; 19] = [
+    1.110, 1.190, 1.255, 1.327, 1.312, 1.266, 1.246, 1.206, 1.212, 1.217, 1.257, 1.250, 1.266, 1.344, 1.443, 1.381,
+    1.419, 1.611, 2.084,
+];
+/// "Linear" (the analyzer's right-click menu, winamp.json's `vizLevels`): `SCALE` as it is, what
+/// builds 5 to 7 showed; reads hotter on dense mixes.
+static LINEAR: AtomicBool = AtomicBool::new(false);
+
+/// Switch between the "Winamp" and "Linear" levels.
+pub fn set_linear(linear: bool) {
+    LINEAR.store(linear, Ordering::Relaxed);
+}
+
 /// A distinct channel name per band, in ffmpeg's own channel order after the music's FL and FR:
 /// `amerge` sorts named channels into that order, so this keeps band i on channel i + 3. Identical
 /// (unnamed mono) bands work too, but make ffmpeg warn that the layouts overlap.
@@ -118,6 +142,7 @@ static EQ_FAILING: AtomicBool = AtomicBool::new(false);
 /// Never fails loudly: no filters just means no EQ and no levels.
 pub fn start(app: &AppHandle) {
     ACTIVE.store(true, Ordering::SeqCst);
+    set_linear(crate::winamp::ui_prefs(app).get("vizLevels").and_then(|v| v.as_str()) == Some("linear"));
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -223,10 +248,15 @@ fn levels(metadata: &str) -> Option<Vec<Option<f64>>> {
 
 /// Band levels → the 75 columns Winamp draws, each bar's four columns alike.
 fn columns(levels: &[Option<f64>]) -> Vec<f32> {
+    let linear = LINEAR.load(Ordering::Relaxed);
     (0..COLUMNS)
         .map(|x| {
             let band = x / 4;
-            levels[band].map_or(0.0, |db| (SCALE[band] * 10f64.powf(db / 20.0)) as f32)
+            levels[band].map_or(0.0, |db| {
+                let amp = 10f64.powf(db / 20.0);
+                let v = if linear { SCALE[band] * amp } else { FIT_A[band] * amp.powf(FIT_P[band]) };
+                v as f32
+            })
         })
         .collect()
 }
@@ -337,6 +367,19 @@ mod tests {
         assert_eq!(cols.len(), COLUMNS);
         assert!(cols[8..12].iter().all(|&c| c > 1.0));
         assert!(cols.iter().enumerate().all(|(i, &c)| (8..12).contains(&i) || c == 0.0));
+    }
+
+    #[test]
+    fn winamp_levels_read_lower_than_linear_on_typical_music() {
+        // A mid band at a busy mix's level: the calibrated mapping keeps it off the top.
+        let mut l = vec![None; BANDS.len()];
+        l[6] = Some(-15.0);
+        set_linear(true);
+        let linear = columns(&l)[24];
+        set_linear(false);
+        let winamp = columns(&l)[24];
+        assert!(winamp < linear, "{winamp} vs {linear}");
+        assert!(winamp > 15.0 * 0.5 && linear > 15.0, "{winamp} {linear}");
     }
 
     #[test]

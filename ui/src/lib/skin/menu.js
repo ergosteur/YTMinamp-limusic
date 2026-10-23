@@ -67,6 +67,7 @@ import {
 	toggleStartInWinamp,
 	toggleShuffle,
 	zoomLyrics,
+	setVizLevels,
 	ABOUT_SIZE,
 	toggleStopAfterCurrent,
 	stopWithFadeout
@@ -395,7 +396,15 @@ export function showVisMenu(at) {
 				check('MilkDrop (Butterchurn)', uiState.milkdrop, '', toggleMilkdrop),
 				SEPARATOR,
 				check('Spectrum analyser', uiState.visMode === 'analyzer', '', () => uiState.visMode !== 'analyzer' && toggleVisualizer()),
-				check('Off', uiState.visMode === 'off', '', () => uiState.visMode !== 'off' && toggleVisualizer())
+				check('Off', uiState.visMode === 'off', '', () => uiState.visMode !== 'off' && toggleVisualizer()),
+				SEPARATOR,
+				{
+					text: 'Analyser levels',
+					items: [
+						check('Winamp', uiState.vizLevels === 'winamp', '', () => setVizLevels('winamp')),
+						check('Linear', uiState.vizLevels === 'linear', '', () => setVizLevels('linear'))
+					]
+				}
 			]
 		}),
 		at

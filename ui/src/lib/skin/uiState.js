@@ -32,6 +32,8 @@ export const uiState = {
 	khz: /** @type {number | null} */ (null),
 	/** Clicking the visualizer cycles it, like Winamp (no oscilloscope yet). */
 	visMode: /** @type {"analyzer" | "off"} */ ('analyzer'),
+	/** The analyzer's levels: like Winamp's own (the default), or linear as builds 5-7 had them. */
+	vizLevels: /** @type {'winamp' | 'linear'} */ ('winamp'),
 	/** Latest 75 analyzer columns from Rust's `winamp-viz` event (viz.rs). */
 	vizColumns: /** @type {number[] | null} */ (null),
 	/** When they came (`performance.now()`): stale columns mean no live feed (testPattern.js). */

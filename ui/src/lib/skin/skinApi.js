@@ -392,6 +392,7 @@ export async function restorePrefs() {
 	uiState.alwaysOnTop = pref('alwaysOnTop', false);
 	uiState.timeRemaining = pref('timeRemaining', false);
 	uiState.visMode = pref('visMode', 'analyzer');
+	uiState.vizLevels = pref('vizLevels', 'winamp');
 	Object.assign(uiState.eq, pref('eq', {}));
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
 	uiState.startInWinamp = pref('startInWinamp', false);
@@ -476,6 +477,14 @@ export function requestSearch() {
 	if (label === 'winamp') openSearch();
 	else if (label === 'winamp-search') flashSearch();
 	else emitTo('winamp', 'winamp-search-add').catch(() => {});
+}
+
+/** The analyzer's levels (its right-click menu): Rust maps the band levels (viz.rs), the choice is
+ *  remembered. @param {'winamp' | 'linear'} levels */
+export function setVizLevels(levels) {
+	uiState.vizLevels = levels;
+	savePref('vizLevels', levels);
+	api.setVizLevels(levels).catch(log('analyzer levels'));
 }
 
 /** "Always start in Winamp mode": read by Rust's `show_main` at the next launch. */

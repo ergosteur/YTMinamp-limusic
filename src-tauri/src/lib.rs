@@ -1045,6 +1045,7 @@ pub fn run() {
             winamp::stop_after_current_set,
             winamp::limusic_window_shown,
             winamp::show_limusic_window,
+            winamp::set_viz_levels,
             commands::open_winamp,
             commands::close_winamp,
             commands::resize_winamp,

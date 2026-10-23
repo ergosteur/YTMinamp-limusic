@@ -562,6 +562,8 @@ export const stopAfterCurrentSet = () => invoke<boolean>('stop_after_current_set
 /** Media Library (Alt+L): Limusic's own window, up or not, and shown or hidden (winamp.rs). */
 export const limusicWindowShown = () => invoke<boolean>('limusic_window_shown');
 export const showLimusicWindow = (show: boolean) => invoke<void>('show_limusic_window', { show });
+/** The analyzer's levels: Winamp's, or linear like builds 5-7 (viz.rs). */
+export const setVizLevels = (levels: 'winamp' | 'linear') => invoke<void>('set_viz_levels', { levels });
 /** The remembered skin, parsed into sprite sheets (PNG data URLs) + window shape/colors for the
  *  Winamp UI. Falls back to the skin built into the binary. */
 export const loadWszSkin = () => invoke<SkinPayload>('load_wsz_skin');
