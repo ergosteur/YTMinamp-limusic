@@ -18,12 +18,15 @@ esac
 podman build -t "$image" -f "$repo/packaging/fedora/Containerfile" "$repo/packaging/fedora"
 mkdir -p "$repo/dist"
 
-# Named volumes keep the cargo registry, pnpm store and target dir between runs.
+# Named volumes keep the cargo registry, pnpm store and target dir between runs. One target dir per
+# checkout: every checkout mounts at /src, and cargo decides staleness by file times, so a shared
+# one hands this checkout another one's newer build of a crate (the dev worktree's player, say).
+target="ytminamp-target-$(basename "$repo")"
 podman run --rm \
   -v "$repo":/src:Z \
   -v ytminamp-cargo-registry:/root/.cargo/registry \
   -v ytminamp-pnpm-store:/root/.local/share/pnpm/store \
-  -v ytminamp-target:/target \
+  -v "$target":/target \
   -e CARGO_TARGET_DIR=/target \
   -e npm_config_store_dir=/root/.local/share/pnpm/store \
   -e TAURI_FRONTEND_PATH=ui \

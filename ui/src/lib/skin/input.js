@@ -32,8 +32,10 @@ import {
 	toggleDoubleSize,
 	focusSearch,
 	nextTrack,
+	play,
 	playIndex,
 	playResult,
+	toggleStopAfterCurrent,
 	prevTrack,
 	seekTo,
 	setVolume,
@@ -57,6 +59,7 @@ import { clickRow, selectOnly } from './selection.js';
 import { uiState } from './uiState.js';
 import { playback } from '$lib/player.svelte';
 import { closeWinamp } from '$lib/api';
+import { onPinch } from './pixels.js';
 
 const TITLEBAR_BUTTON_SIZE = { w: 9, h: 9 };
 const PLAYLIST_TOGGLE_SIZE = { w: 23, h: 12 };
@@ -98,6 +101,8 @@ function runButtonAction(name) {
 	const log = (/** @type {string} */ what) => (/** @type {unknown} */ e) => console.error(`${what} failed`, e);
 	switch (name) {
 		case 'play':
+			play().catch(log('play'));
+			return;
 		case 'pause':
 			togglePlayPause().catch(log('toggle play/pause'));
 			return;
@@ -192,7 +197,7 @@ function percentFromHorizontalX(pos, x) {
 /** @typedef {'search' | 'playlist'} ListKind */
 /**
  * A menu other than the main one: a search result's, or one of the playlist's bottom buttons'.
- * @typedef {{ kind: 'result' | 'queueRow', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' | 'lyrics' | 'title' | 'vis' | 'art' | 'search-add' | 'search-rem' | 'search-sel' | 'search-misc' | 'search-list' }} MenuTarget
+ * @typedef {{ kind: 'result' | 'queueRow', index: number } | { kind: 'add' | 'rem' | 'sel' | 'misc' | 'list' | 'presets' | 'lyrics' | 'title' | 'vis' | 'stop' | 'art' | 'search-add' | 'search-rem' | 'search-sel' | 'search-misc' | 'search-list' }} MenuTarget
  */
 /** @typedef {{ w: number, h: number }} Size */
 /**
@@ -306,7 +311,7 @@ const BUTTON_TIPS = /** @type {Record<string, string>} */ ({
 	previous: 'Previous track',
 	play: 'Play',
 	pause: 'Pause',
-	stop: 'Stop',
+	stop: 'Stop (Ctrl+click: stop after current; right-click for more)',
 	next: 'Next track',
 	eject: 'Search YouTube Music (show/hide)',
 	playlist: 'Toggle playlist editor',
@@ -513,6 +518,8 @@ export function attachInput(canvas, host) {
 			host.showMenu({ kind: 'title' }, at);
 		} else if (hit?.kind === 'main' && hits(VIS_POS, VIS_POS, hit.px, hit.py)) {
 			host.showMenu({ kind: 'vis' }, at);
+		} else if (hit?.kind === 'main' && buttonAt(hit.px, hit.py) === 'stop') {
+			host.showMenu({ kind: 'stop' }, at);
 		} else {
 			host.showMenu(null, at);
 		}
@@ -619,6 +626,11 @@ export function attachInput(canvas, host) {
 			return;
 		}
 		const button = buttonAt(x, y);
+		// Ctrl+click on Stop: Stop after current, the button's own way to it.
+		if (button === 'stop' && (event.ctrlKey || event.metaKey)) {
+			toggleStopAfterCurrent();
+			return;
+		}
 		if (button) {
 			uiState.pressedButton = button;
 			return;
@@ -641,6 +653,13 @@ export function attachInput(canvas, host) {
 			// Cosmetic only — see uiState.js.
 			uiState.balance = Math.round(percentFromHorizontalX(BALANCE_POS, x) * 200 - 100);
 		}
+	});
+
+	// A pinch over the lyrics zooms them, like Ctrl+wheel (pixels.js `onPinch`).
+	onPinch((step, event) => {
+		const { clientX = NaN, clientY = NaN } = /** @type {{ clientX?: number, clientY?: number }} */ (/** @type {unknown} */ (event));
+		const point = canvasPoint(canvas, /** @type {MouseEvent} */ ({ clientX, clientY }));
+		if (host.hitTest(point.x, point.y)?.kind === 'lyrics') zoomLyrics(step);
 	});
 
 	canvas.addEventListener(
@@ -706,7 +725,24 @@ export function attachInput(canvas, host) {
 		}
 	});
 
-	window.addEventListener('mouseup', () => {
+	/**
+	 * Whether a release is still on what was pressed: the ✕ of `kind`, or a main window button.
+	 * Let go anywhere else and nothing happens, as in Winamp.
+	 * @param {MouseEvent} event @param {string} kind a panel, or 'main' for `button`
+	 * @param {string} [button]
+	 */
+	const releasedOn = (event, kind, button) => {
+		const point = canvasPoint(canvas, event);
+		const hit = host.hitTest(point.x, point.y);
+		if (!hit || hit.kind !== kind) return false;
+		if (kind === 'main') return buttonAt(hit.px, hit.py) === button;
+		if (kind === 'art' || kind === 'lyrics') return onArtClose(hit);
+		if (kind === 'eq') return eqHit(hit.px, hit.py) === 'close';
+		const g = geometry({ w: hit.w, h: hit.h });
+		return hits(g.close, g.close, hit.px, hit.py);
+	};
+
+	window.addEventListener('mouseup', (event) => {
 		press = null;
 		if (drag?.what === 'seek') {
 			seekTo(uiState.draggingPositionSecs).catch((e) => console.error('seek failed', e));
@@ -730,18 +766,16 @@ export function attachInput(canvas, host) {
 		uiState.eq.pressed = null;
 
 		if (uiState.pressedButton) {
-			runButtonAction(uiState.pressedButton);
+			if (releasedOn(event, 'main', uiState.pressedButton)) runButtonAction(uiState.pressedButton);
 			uiState.pressedButton = null;
 		}
+		const close = closing !== null && releasedOn(event, closing);
 		if (closing === 'art' || closing === 'lyrics') {
 			uiState[closing].closePressed = false;
-			host.closePanel(closing);
 		} else if (closing === 'search' || closing === 'playlist') {
 			panelState(closing).pressed = null;
-			host.closePanel(closing);
-		} else if (closing === 'eq') {
-			host.closePanel('eq');
 		}
+		if (close && closing) host.closePanel(closing);
 		closing = null;
 	});
 }

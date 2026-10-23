@@ -6,6 +6,10 @@ license.workspace = true
 description = "Classic Winamp 2.x .wsz skin parser — pure Rust, no Tauri/UI dependency"
 
 [dependencies]
-zip = "2"
+# Deflate only, like src-tauri's: skins are untrusted input, and are stored or deflated.
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+# flate2's own default backend (pure-Rust miniz_oxide), which the app already uses: without it
+# this crate alone (`cargo test -p skin`) has no zlib.
+flate2 = "1"
 thiserror = { workspace = true }
 serde = { workspace = true }

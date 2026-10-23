@@ -7,6 +7,10 @@
 
 use crate::error::Error;
 
+/// The largest width or height accepted. Classic sprites are a few hundred pixels at most; this
+/// keeps a hostile header (a 100-byte RLE file claiming 30000×30000) from costing gigabytes.
+pub const MAX_SIDE: u32 = 2048;
+
 /// A decoded sprite sheet: straight RGBA8, top-down row order, no per-pixel alpha (classic BMP
 /// has none — a skin's non-rectangular shape comes from `region.txt`, not from image alpha).
 #[derive(Debug, Clone)]
@@ -42,6 +46,9 @@ pub fn decode(name: &str, bytes: &[u8]) -> Result<Image, Error> {
     let height = height_raw.unsigned_abs();
     let bpp = read_u16(28)?;
     let compression = read_u32(30)?;
+    if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE {
+        return Err(Error::BmpSize { name, width, height });
+    }
 
     // 0 = BI_RGB (uncompressed), 1 = BI_RLE8, 2 = BI_RLE4. Anything else (bitfields, embedded
     // JPEG/PNG) no skin seen so far uses.
@@ -213,6 +220,16 @@ mod tests {
             .chunks(img.width as usize * 4)
             .map(|row| row.chunks(4).map(|p| if p[0] == 255 { 'R' } else { '.' }).collect())
             .collect()
+    }
+
+    #[test]
+    fn sizes_a_skin_cant_have_are_refused_before_allocating() {
+        // An RLE8 stream that ends at once: without the cap this "decodes" 30000×30000.
+        for (w, h) in [(30000, 30000), (i32::MIN, i32::MIN), (0, 4), (4, 0)] {
+            let err = decode("main.bmp", &bmp(w, h, 8, 1, &[0, 1])).unwrap_err();
+            assert!(matches!(err, Error::BmpSize { .. }), "{w}x{h}: {err}");
+        }
+        assert!(decode("main.bmp", &bmp(MAX_SIDE as i32, 1, 8, 1, &[0, 1])).is_ok());
     }
 
     #[test]

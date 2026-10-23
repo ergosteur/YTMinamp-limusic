@@ -8,8 +8,8 @@
 	import { closeWinampPanel, resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
-	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
-	import { pinOneToOnePixels } from '../skin/pixels.js';
+	import { artFrame, onCloseButton, drawFrame, frameInset } from '../skin/render/albumArt.js';
+	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { openLink } from '../skin/playlistActions.js';
@@ -29,7 +29,7 @@
 	let sprites = new Map();
 	/** @type {import('$lib/api').SkinPayload['pledit']} */
 	let pledit = $state({});
-	let inset = $state({ top: 20, bottom: 14, left: 11, right: 8 });
+	let inset = $state({ top: 20, bottom: 14, left: 11, right: 11 });
 	let status = $state('Paste a YouTube or YouTube Music link, then press Enter');
 	let busy = $state(false);
 	let closePressed = false;
@@ -82,18 +82,29 @@
 		// The titlebar lights with focus, and this only draws when something changes.
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
-		pinOneToOnePixels().catch((e) => logUi('error', `open url zoom pin failed: ${e}`));
-		const reload = () =>
-			loadSkin()
+		// The DPI fix, then double size on top, following the Winamp window's.
+		const unlistenDouble = followDoubleSize(
+			pinOneToOnePixels().catch((e) => logUi('error', `open url zoom pin failed: ${e}`)),
+			'url'
+		);
+		// Only the newest load lands: switch skins twice quickly and the second wins, whichever
+		// finishes decoding first.
+		let skinLoads = 0;
+		const reload = () => {
+			const mine = ++skinLoads;
+			return loadSkin()
 				.then(async (payload) => {
-					sprites = await decodeAllSprites(payload.sprites);
+					const decoded = await decodeAllSprites(payload.sprites);
+					if (mine !== skinLoads) return;
+					sprites = decoded;
 					pledit = payload.pledit;
 					inset = frameInset(artFrame(sprites));
 					draw();
-					// The frame decides the height (gen.bmp's is thicker than the EQ fallback's).
-					resizeWinampPanel('url', WIDTH, inset.top + BODY_H + inset.bottom).catch(() => {});
+					// The frame decides the height (gen.bmp's, the playlist's and the EQ's differ).
+					resizeWinampPanel('url', WIDTH * doubleFactor(), (inset.top + BODY_H + inset.bottom) * doubleFactor()).catch(() => {});
 				})
 				.catch((e) => logUi('error', `open url skin failed: ${e}`));
+		};
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 		requestAnimationFrame(() => input?.focus());
@@ -102,12 +113,7 @@
 		let press = /** @type {{ x: number, y: number } | null} */ (null);
 		const onDown = (/** @type {MouseEvent} */ e) => {
 			if (e.button !== 0) return;
-			const onClose =
-				e.clientX >= WIDTH + ART_CLOSE.dx &&
-				e.clientX < WIDTH + ART_CLOSE.dx + ART_CLOSE.w &&
-				e.clientY >= ART_CLOSE.y &&
-				e.clientY < ART_CLOSE.y + ART_CLOSE.h;
-			if (onClose) {
+			if (onCloseButton(e, WIDTH)) {
 				closePressed = true;
 				draw();
 			} else if (e.clientY < inset.top) {
@@ -120,15 +126,20 @@
 				getCurrentWindow().startDragging();
 			}
 		};
-		const onUp = () => {
+		const onUp = (/** @type {MouseEvent} */ e) => {
 			press = null;
-			if (closePressed) close();
+			if (!closePressed) return;
+			closePressed = false;
+			// Released off the button: no close, as in Winamp.
+			if (onCloseButton(e, WIDTH)) close();
+			else draw();
 		};
 		canvas.addEventListener('mousedown', onDown);
 		window.addEventListener('mousemove', onMove);
 		window.addEventListener('mouseup', onUp);
 
 		return () => {
+			unlistenDouble.then((f) => f());
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
 			unlistenSkin.then((f) => f());

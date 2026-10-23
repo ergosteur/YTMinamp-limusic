@@ -9,15 +9,16 @@
 	import { resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
-	import { ART_CLOSE, artFrame, artSize, drawAlbumArt } from '../skin/render/albumArt.js';
+	import { artFrame, artSize, drawAlbumArt, onCloseButton } from '../skin/render/albumArt.js';
 	import { setActivePart } from '../skin/focus.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { coverFor } from '../skin/art.js';
-	import { pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
 	import { ART_CAPTION_EVENT, loadSkin } from '../skin/skinApi.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
 	import { showArtMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
+	import { attachKeys } from '../skin/keys.js';
 
 	/** The corner you drag to resize, like Winamp's generic windows. */
 	const GRIP = 14;
@@ -37,17 +38,30 @@
 		emitTo('winamp', 'winamp-panel-dock', { kind: 'art', dock }).catch((e) => console.error('dock request failed', e));
 
 	onMount(() => {
+		// Winamp's keys work here too: they're run by the Winamp window (keys.js).
+		const detachKeys = attachKeys();
 		setActivePart('art');
-		pinOneToOnePixels().catch((e) => logUi('error', `album art zoom pin failed: ${e}`));
+		// The DPI fix, then double size on top, following the Winamp window's.
+		const unlistenDouble = followDoubleSize(
+			pinOneToOnePixels().catch((e) => logUi('error', `album art zoom pin failed: ${e}`)),
+			'art'
+		);
 
-		const reload = () =>
-			loadSkin()
+		// Only the newest load lands: switch skins twice quickly and the second wins, whichever
+		// finishes decoding first.
+		let skinLoads = 0;
+		const reload = () => {
+			const mine = ++skinLoads;
+			return loadSkin()
 				.then((payload) => {
 					pledit = payload.pledit;
 					return decodeAllSprites(payload.sprites);
 				})
-				.then((decoded) => (sprites = decoded))
+				.then((decoded) => {
+					if (mine === skinLoads) sprites = decoded;
+				})
 				.catch((e) => logUi('error', `album art skin failed: ${e}`));
+		};
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 		// The album name under the picture: this window grows or shrinks by its strip.
@@ -55,7 +69,7 @@
 			uiState.art.caption = on;
 			if (sprites.size === 0) return;
 			const size = artSize(artFrame(sprites), { width: window.innerWidth }, on);
-			resizeWinampPanel('art', size.w, size.h).catch(() => {});
+			resizeWinampPanel('art', size.w * doubleFactor(), size.h * doubleFactor()).catch(() => {});
 		};
 		loadPrefs().then(() => (uiState.art.caption = pref('artCaption', false)));
 		const unlistenCaption = listen(ART_CAPTION_EVENT, (e) => setCaption(/** @type {boolean} */ (e.payload)));
@@ -71,15 +85,11 @@
 			if (e.button !== 0) return;
 			const w = window.innerWidth;
 			const h = window.innerHeight;
-			const onClose =
-				e.clientX >= w + ART_CLOSE.dx &&
-				e.clientX < w + ART_CLOSE.dx + ART_CLOSE.w &&
-				e.clientY >= ART_CLOSE.y &&
-				e.clientY < ART_CLOSE.y + ART_CLOSE.h;
-			if (onClose) {
+			if (onCloseButton(e, w)) {
 				closePressed = true;
 			} else if (e.clientX >= w - GRIP && e.clientY >= h - GRIP) {
-				resize = { x: e.screenX, y: e.screenY, w, h };
+				// Page px from the window's corner (which stays put): the same unit at any zoom.
+				resize = { x: e.clientX, y: e.clientY, w, h };
 			} else if (e.detail >= 2) {
 				dockTo('right');
 			} else {
@@ -91,12 +101,14 @@
 				press = null;
 				getCurrentWindow().startDragging();
 			}
+			// Released outside the window (the drag outran it): no mouseup comes, so end it here.
+			if (resize && !(e.buttons & 1)) return onUp(e);
 			canvas.style.cursor = e.clientX >= window.innerWidth - GRIP && e.clientY >= window.innerHeight - GRIP ? 'nwse-resize' : '';
 			if (!resize || sprites.size === 0) return;
 			// The picture stays square: follow whichever way the pointer pulled further.
 			const frame = artFrame(sprites);
-			const byWidth = resize.w + (e.screenX - resize.x);
-			const byHeight = resize.w + (e.screenY - resize.y);
+			const byWidth = resize.w + (e.clientX - resize.x);
+			const byHeight = resize.w + (e.clientY - resize.y);
 			const width = Math.max(artSize(frame, { width: MIN_WIDTH }).w, Math.round(Math.max(byWidth, byHeight)));
 			const size = artSize(frame, { width }, uiState.art.caption);
 			const sendNow = pending === null;
@@ -105,16 +117,17 @@
 				requestAnimationFrame(() => {
 					const next = pending;
 					pending = null;
-					if (next) resizeWinampPanel('art', next.w, next.h).catch(() => {});
+					if (next) resizeWinampPanel('art', next.w * doubleFactor(), next.h * doubleFactor()).catch(() => {});
 				});
 			}
 		};
-		const onUp = () => {
+		const onUp = (/** @type {MouseEvent} */ e) => {
 			press = null;
 			resize = null;
 			if (closePressed) {
 				closePressed = false;
-				dockTo(null);
+				// Released off the button: no close, as in Winamp.
+				if (onCloseButton(e, window.innerWidth)) dockTo(null);
 			}
 		};
 		canvas.addEventListener('mousedown', onDown);
@@ -144,6 +157,8 @@
 		});
 
 		return () => {
+			unlistenDouble.then((f) => f());
+			detachKeys();
 			stopLoop();
 			unlistenSkin.then((f) => f());
 			unlistenCaption.then((f) => f());

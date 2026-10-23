@@ -34,6 +34,7 @@
 	import * as api from '$lib/api';
 	import { openMiniPlayer, openWinamp, playback, prefs, refreshView, toast, ui } from '$lib/player.svelte';
 	import { win } from '$lib/win.svelte';
+	import { APP_NAME } from '$lib/skin/brand.js';
 	import { lt } from '$lib/lt.svelte';
 	import { anchorMenu, fitMenu, NO_ANCHOR } from '$lib/menu';
 	import { t } from '$lib/i18n.svelte';
@@ -138,7 +139,7 @@
 	<span
 		class="pointer-events-none absolute inset-x-0 text-center text-xs font-medium tracking-wide text-muted-foreground"
 	>
-		Limusic
+		{APP_NAME}
 	</span>
 
 	<!-- macOS overlay style floats the traffic lights over the top-left of the webview, so the row
@@ -298,18 +299,38 @@
 		</button>
 
 		<!-- Winamp skin mode: the same idea as the mini player, swapped for a classic Winamp 2.x
-		     skin window instead of the floating widget (winamp.rs). No matching hugeicon exists,
-		     hence the inline glyph — three bars evoking a classic equalizer/skin window. -->
+		     skin window instead of the floating widget (winamp.rs). The button is ytminamp's own
+		     icon (packaging/icon/ytminamp.svg), inline, its gradient ids prefixed to stay unique. -->
 		<button
 			class="flex h-full w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-accent/10 hover:text-foreground"
 			onclick={openWinamp}
 			title="Winamp skin mode"
 			aria-label="Winamp skin mode"
 		>
-			<svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5">
-				<rect x="1.5" y="2.5" width="13" height="11" rx="1" />
-				<line x1="1.5" y1="5.5" x2="14.5" y2="5.5" />
-				<circle cx="3.5" cy="4" r="0.6" fill="currentColor" stroke="none" />
+			<svg viewBox="0 0 1024 1024" class="h-4 w-4">
+				<defs>
+					<radialGradient id="ytminamp-red" cx="40%" cy="30%" r="80%">
+						<stop offset="0" stop-color="#ff4545" />
+						<stop offset="0.6" stop-color="#ec0d1d" />
+						<stop offset="1" stop-color="#b0000f" />
+					</radialGradient>
+					<linearGradient id="ytminamp-gold" x1="0" y1="0" x2="0.6" y2="1">
+						<stop offset="0" stop-color="#fff38a" />
+						<stop offset="0.5" stop-color="#ffc41f" />
+						<stop offset="1" stop-color="#ff7a00" />
+					</linearGradient>
+				</defs>
+				<circle cx="512" cy="512" r="480" fill="url(#ytminamp-red)" />
+				<path d="M345 235 L345 789 L825 512 Z" fill="#fff" stroke="#fff" stroke-width="70" stroke-linejoin="round" />
+				<g transform="translate(512 517) scale(1.28) translate(-512 -517)">
+					<path
+						d="M545 300 L405 545 L500 545 L440 735 L620 470 L525 470 L590 300 Z"
+						fill="url(#ytminamp-gold)"
+						stroke="#3a1a00"
+						stroke-width="18"
+						stroke-linejoin="round"
+					/>
+				</g>
 			</svg>
 		</button>
 

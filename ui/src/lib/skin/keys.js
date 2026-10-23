@@ -5,7 +5,8 @@
 // them to it, bar the ones about its own selection.
 import { emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { typing } from '$lib/shortcuts';
+import { keyOf, typing } from '$lib/shortcuts';
+import { toggleLimusic } from './navigate.js';
 import {
 	cycleRepeat,
 	nextTrack,
@@ -24,7 +25,9 @@ import {
 	fileInfoForSelection,
 	toggleMilkdrop,
 	toggleShuffle,
-	zoomLyrics
+	zoomLyrics,
+	toggleStopAfterCurrent,
+	stopWithFadeout
 } from './skinApi.js';
 import { toggleTimeRemaining } from './input.js';
 import { cropToSelected, removeSelected } from './playlistActions.js';
@@ -32,7 +35,23 @@ import { uiState } from './uiState.js';
 
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
- *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'} KeyAction */
+ *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'
+ *   | 'stopAfter' | 'stopFade' | 'library' | 'searchPanel'} KeyAction */
+
+/**
+ * The key, as Limusic's `keyOf` reads it, except where a modifier or the layout turns one of our
+ * letters or digits into something else: Option on a Mac (Option+G is ©, Option+E a dead key),
+ * AZERTY's digit row (Ctrl+2 is é). Those are read by the physical key instead.
+ * @param {KeyboardEvent} e
+ */
+function keyName(e) {
+	const k = keyOf(e);
+	if (k === 'Dead' || (k.length === 1 && k.charCodeAt(0) > 127)) {
+		if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
+		if (/^Digit\d$/.test(e.code)) return e.code.slice(5);
+	}
+	return k.length === 1 ? k.toLowerCase() : k;
+}
 
 /**
  * The action a key press means, or null if it isn't one of ours.
@@ -42,9 +61,9 @@ import { uiState } from './uiState.js';
 function actionFor(e) {
 	if (typing(e.target) || e.defaultPrevented) return null;
 	const ctrl = e.ctrlKey || e.metaKey;
-	const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+	const key = keyName(e);
 	if (e.altKey && !ctrl && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', 3: 'fileInfo' })[key] ?? null;
+		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', k: 'searchPanel', 3: 'fileInfo', l: 'library' })[key] ?? null;
 	}
 	// Lyrics text size, the keys Limusic zooms its own window with. Shift allowed: `+` is
 	// Shift+= on many layouts. The numpad's +, - and 0 give the same keys.
@@ -55,8 +74,20 @@ function actionFor(e) {
 	// Winamp's start/stop visualization plugin.
 	if (ctrl && e.shiftKey && !e.altKey && key === 'k') return 'milkdrop';
 	if (ctrl && !e.altKey && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ l: 'url', a: 'onTop', 2: 'double', t: 'time', Delete: 'crop' })[key] ?? null;
+		return (
+			/** @type {Record<string, KeyAction>} */ ({
+				l: 'url',
+				a: 'onTop',
+				2: 'double',
+				t: 'time',
+				Delete: 'crop',
+				v: 'stopAfter',
+				// J's, held with Ctrl: Ctrl+F is Limusic's next track.
+				j: 'search'
+			})[key] ?? null
+		);
 	}
+	if (e.shiftKey && !ctrl && !e.altKey && key === 'v') return 'stopFade';
 	if (ctrl || e.altKey || e.shiftKey) return null;
 	return (
 		/** @type {Record<string, KeyAction>} */ ({
@@ -115,16 +146,28 @@ export function runKey(action) {
 		case 'fileInfo':
 			return fileInfoForSelection();
 		case 'crop':
-			if (uiState.pl.open) cropToSelected().catch(log('crop'));
+			if (plDocked()) cropToSelected().catch(log('crop'));
 			return;
 		case 'remove':
-			if (uiState.pl.open) removeSelected().catch(log('remove'));
+			if (plDocked()) removeSelected().catch(log('remove'));
 			return;
 		case 'playSelected':
-			if (uiState.pl.open && uiState.pl.selected !== null) playIndex(uiState.pl.selected).catch(log('play'));
+			if (plDocked() && uiState.pl.selected !== null) playIndex(uiState.pl.selected).catch(log('play'));
 			return;
+		case 'stopAfter':
+			return toggleStopAfterCurrent();
+		case 'searchPanel':
+			return togglePanel('search');
+		case 'library':
+			return void toggleLimusic().catch(log('media library'));
+		case 'stopFade':
+			return void stopWithFadeout().catch(log('stop with fadeout'));
 	}
 }
+
+/** The playlist is in this window. Floating, its selection lives in its own window, which handles
+ *  these keys itself: this one's would be left over from before it floated. */
+const plDocked = () => uiState.pl.open && uiState.pl.dock !== 'float';
 
 /**
  * Listen for the shortcuts in this window. `local` gets first go at each (a floating playlist

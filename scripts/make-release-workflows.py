@@ -175,7 +175,7 @@ def linux() -> str:
     t = sub(t, "-W limusic", "-W ytminamp")
     return t + upload_step(
         "target/release/bundle/appimage/ytminamp_${VERSION}_*.AppImage"
-        ' $([ "${{ steps.deb_check.outcome }}" = success ] && echo target/release/bundle/deb/ytminamp_${VERSION}_*.deb)'
+        ' $([ "${{ steps.deb_check.outcome }}" = success ] && echo target/release/bundle/deb/ytminamp_${VERSION}_*.deb || true)'
     )
 
 

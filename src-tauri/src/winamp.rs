@@ -20,7 +20,8 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 9] = ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo"];
+pub const PANELS: [&str; 10] =
+    ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about"];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
 
@@ -92,6 +93,12 @@ pub fn close(app: &AppHandle) {
         return;
     }
     crate::viz::stop(app);
+    // A "stop after current" left on would pause the player at the end of a track with no
+    // Winamp window to notice and turn it off again.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = stop_after_current(&handle, false).await;
+    });
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(w) = handle.get_webview_window(LABEL) {
@@ -175,6 +182,7 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "milkdrop" => "MilkDrop",
         "eqsave" => "Save EQ Preset",
         "fileinfo" => "File Info",
+        "about" => "About YTMinamp",
         _ => "Search",
     };
     // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a
@@ -520,17 +528,27 @@ fn prefs_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("winamp.json"))
 }
 
+/// The saved state, or the defaults on a first run. A file that won't parse is moved aside to
+/// `winamp.json.bad` (and logged) rather than overwritten by the next save, so it can be looked at.
 fn read_prefs(app: &AppHandle) -> Prefs {
-    prefs_path(app)
-        .ok()
-        .and_then(|p| std::fs::read(p).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    let Ok(path) = prefs_path(app) else { return Prefs::default() };
+    let Ok(bytes) = std::fs::read(&path) else { return Prefs::default() };
+    serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+        let bad = path.with_extension("json.bad");
+        tracing::warn!("winamp: {} is unreadable ({e}), moved to {}", path.display(), bad.display());
+        let _ = std::fs::rename(&path, &bad);
+        Prefs::default()
+    })
 }
 
+/// Written to a temporary file and renamed over the old one, so a crash mid-write leaves the old
+/// file whole instead of half a new one.
 fn write_prefs(app: &AppHandle, prefs: &Prefs) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(prefs).map_err(|e| e.to_string())?;
-    std::fs::write(prefs_path(app)?, json).map_err(|e| e.to_string())
+    let path = prefs_path(app)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -571,21 +589,44 @@ pub fn list(app: &AppHandle) -> Result<SkinList, String> {
 }
 
 /// Copy a picked skin file into [`skins_dir`] and return its new path. Parsed first, so a file
-/// that isn't a usable skin never lands in the menu.
-pub fn import(app: &AppHandle, src: &str) -> Result<String, String> {
+/// that isn't a usable skin never lands in the menu. A skin of the same name is only replaced
+/// with `replace` (the UI asks first).
+pub fn import(app: &AppHandle, src: &str, replace: bool) -> Result<String, String> {
     let bytes = std::fs::read(src).map_err(|e| format!("couldn't read {src}: {e}"))?;
     skin::load(&bytes).map_err(|e| format!("not a Winamp skin: {e}"))?;
     let name = std::path::Path::new(src).file_name().ok_or("no file name")?;
     let dest = skins_dir(app)?.join(name);
     if std::path::Path::new(src) != dest {
+        if dest.exists() && !replace {
+            return Err(format!("{} is already in the skins folder", name.to_string_lossy()));
+        }
         std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
     }
     Ok(dest.to_string_lossy().into_owned())
 }
 
+/// `path` if it's a skin file directly in [`skins_dir`] (the only ones the skin menu offers),
+/// else an error: the webview names the file, so it doesn't get to read others.
+fn in_skins_dir(app: &AppHandle, path: &str) -> Result<(), String> {
+    let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+    let dir = std::fs::canonicalize(skins_dir(app)?).map_err(|e| e.to_string())?;
+    let skin_ext = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| x.eq_ignore_ascii_case("wsz") || x.eq_ignore_ascii_case("zip"));
+    if path.parent() == Some(dir.as_path()) && skin_ext {
+        Ok(())
+    } else {
+        Err(format!("{} isn't a skin in the skins folder", path.display()))
+    }
+}
+
 /// Load `path` (`None` = built-in) and remember it as the skin to open with next time. Only
-/// remembered once it has parsed, so a broken pick can't stick.
+/// remembered once it has parsed, so a broken pick can't stick. Only skins in [`skins_dir`].
 pub async fn select(app: &AppHandle, path: Option<String>) -> Result<SkinPayload, String> {
+    if let Some(path) = &path {
+        in_skins_dir(app, path)?;
+    }
     let payload = load(path.as_deref()).await?;
     update_prefs(app, |prefs| prefs.skin = path)?;
     Ok(payload)
@@ -602,14 +643,89 @@ pub async fn load_current(app: &AppHandle) -> Result<SkinPayload, String> {
     load(None).await
 }
 
+/// Winamp's "Stop after current" (Ctrl+V): pause at the end of the playing track instead of
+/// going on to the next. mpv's own `keep-open`, so nothing of the next track is heard; crossfade
+/// is suspended meanwhile, since a fade starts the next track before the end. The UI notices
+/// the stop (paused at the end) and turns this off again; closing Winamp mode does too.
+pub async fn stop_after_current(app: &AppHandle, on: bool) -> Result<(), String> {
+    let state = app.state::<std::sync::Arc<crate::state::AppState>>();
+    state.player.set_keep_open(on).map_err(|e| e.to_string())?;
+    STOP_AFTER.store(on, std::sync::atomic::Ordering::Relaxed);
+    if on {
+        state.player.set_crossfade(None);
+    } else {
+        state.apply_crossfade().await;
+    }
+    Ok(())
+}
+
+/// Media Library (Alt+L): whether Limusic's own window is up (shown and not minimized), for the
+/// main menu's tick. Winamp mode's library is that window.
+#[tauri::command]
+pub fn limusic_window_shown(app: AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|w| {
+        w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false)
+    })
+}
+
+/// Show Limusic's window (to the front, where it was) or hide it again; Winamp mode stays open.
+/// Shown directly, not through `show_main`, which "Always start in Winamp mode" turns into opening
+/// Winamp mode instead.
+#[tauri::command]
+pub fn show_limusic_window(app: AppHandle, show: bool) -> Result<(), String> {
+    let w = app.get_webview_window("main").ok_or("Limusic's window is gone")?;
+    let done = if show {
+        w.show().and_then(|_| w.unminimize()).and_then(|_| w.set_focus())
+    } else {
+        w.hide()
+    };
+    done.map_err(|e| e.to_string())
+}
+
+/// Whether a "stop after current" is set: every Winamp window's menus tick it from here.
+static STOP_AFTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+pub async fn set_stop_after_current(app: AppHandle, on: bool) -> Result<(), String> {
+    stop_after_current(&app, on).await
+}
+
+#[tauri::command]
+pub fn stop_after_current_set() -> bool {
+    STOP_AFTER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Sheets a skin may leave out that Winamp then takes from its base skin. Not `gen`/`genex`: a skin
+/// without them gets its generic windows framed in its own playlist editor's graphics instead
+/// (render/albumArt.js `artFrame`), which match it better than the base skin's grey.
+const FROM_BASE: &[&str] = &[
+    "cbuttons", "titlebar", "shufrep", "posbar", "volume", "balance", "monoster", "playpaus",
+    "numbers", "text", "pledit", "eqmain", "eq_ex", "mb", "video",
+];
+
+/// Fill the sheets `skin` lacks from the built-in base skin, as Winamp does, so a skin without,
+/// say, `cbuttons.bmp` shows the base buttons rather than none. `numbers` is filled even beside
+/// a skin's own `nums_ex`, which the UI prefers anyway.
+fn fill_from_base(skin: &mut skin::Skin) {
+    static BASE: std::sync::OnceLock<Option<skin::Skin>> = std::sync::OnceLock::new();
+    let Some(base) = BASE.get_or_init(|| skin::load(DEFAULT_SKIN).ok()) else { return };
+    for name in FROM_BASE {
+        if let (false, Some(sprite)) = (skin.sprites.contains_key(*name), base.sprite(name)) {
+            skin.sprites.insert((*name).to_owned(), sprite.clone());
+        }
+    }
+}
+
 /// Parse a `.wsz` at `path` (or the built-in default) and hand back every sprite sheet
-/// (PNG-encoded) plus the window shape/colors/playlist styling the UI needs to draw it.
+/// (PNG-encoded) plus the window shape/colors/playlist styling the UI needs to draw it, with
+/// any sheet it lacks taken from the base skin.
 async fn load(path: Option<&str>) -> Result<SkinPayload, String> {
     let bytes = match path {
         Some(path) => std::fs::read(path).map_err(|e| format!("couldn't read {path}: {e}"))?,
         None => DEFAULT_SKIN.to_vec(),
     };
-    let parsed = skin::load(&bytes).map_err(|e| e.to_string())?;
+    let mut parsed = skin::load(&bytes).map_err(|e| e.to_string())?;
+    fill_from_base(&mut parsed);
 
     let mut sprites = HashMap::new();
     for (name, sprite) in &parsed.sprites {
@@ -623,4 +739,27 @@ async fn load(path: Option<&str>) -> Result<SkinPayload, String> {
         viscolor: parsed.viscolor,
         pledit: parsed.pledit,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_sheets_come_from_the_base_skin_but_gen_does_not() {
+        let mut skin = skin::load(DEFAULT_SKIN).unwrap();
+        skin.sprites.remove("cbuttons");
+        skin.sprites.remove("gen");
+        fill_from_base(&mut skin);
+        assert!(skin.sprite("cbuttons").is_some());
+        assert!(skin.sprite("gen").is_none());
+    }
+
+    #[test]
+    fn every_filled_sheet_is_in_the_base_skin() {
+        let base = skin::load(DEFAULT_SKIN).unwrap();
+        for name in FROM_BASE {
+            assert!(base.sprite(name).is_some(), "{name}");
+        }
+    }
 }

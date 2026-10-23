@@ -27,8 +27,7 @@ import {
 	songLibraryToken,
 	toggleSongLibrary
 } from '$lib/player.svelte';
-import { message } from '@tauri-apps/plugin-dialog';
-import { getVersion } from '@tauri-apps/api/app';
+import { ask } from '@tauri-apps/plugin-dialog';
 import {
 	lyricsOnRight,
 	nextTrack,
@@ -36,9 +35,7 @@ import {
 	openUrlDialog,
 	pause,
 	play,
-	playResult,
 	prevTrack,
-	queueResult,
 	requestSearch,
 	saveEq,
 	seekBy,
@@ -69,19 +66,21 @@ import {
 	toggleMilkdrop,
 	toggleStartInWinamp,
 	toggleShuffle,
-	zoomLyrics
+	zoomLyrics,
+	ABOUT_SIZE,
+	toggleStopAfterCurrent,
+	stopWithFadeout
 } from './skinApi.js';
 import { toggleTimeRemaining, toggleVisualizer } from './input.js';
 import { EQ_PRESETS } from './render/equalizer.js';
 import { lyricsNow, lyricsShow, lyricsTrack, pickedLyrics, toggleLyricsShow } from './lyrics.js';
-import { zoomFactor } from './pixels.js';
+import { doubleFactor, zoomFactor } from './pixels.js';
 import { thumb } from '$lib/thumb';
 import { SEARCH_KINDS, isSongRow } from './searchKinds.js';
-import { openInLimusic } from './navigate.js';
+import { openInLimusic, toggleLimusic } from './navigate.js';
 import { copyText } from '$lib/clipboard';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
-import { YTMINAMP_RELEASE } from './release.js';
 import { uiState } from './uiState.js';
 import {
 	clearUpcoming,
@@ -156,17 +155,20 @@ async function popup(describe, at) {
 		at = { x: at.x * zoomFactor(), y: at.y * zoomFactor() };
 		if (gtkMenus !== false) {
 			if (!listening) {
-				listening = true;
 				// Hears every window's picks; the ids are this window's own (see toEntries).
 				await listen('winamp-menu', (e) => actions.get(/** @type {string} */ (e.payload))?.());
+				listening = true;
 			}
 			actions = new Map();
 			try {
 				await api.winampPopupMenu(toEntries(options.items ?? []), at.x, at.y);
 				gtkMenus = true;
 				return;
-			} catch {
-				gtkMenus = false;
+			} catch (e) {
+				// Only "not here" moves to Tauri's menu: on Linux that one wedges on Wayland, so a
+				// GTK popup that failed once is tried again next time instead.
+				if (String(e).includes('not on this platform')) gtkMenus = false;
+				else return console.error('winamp menu failed', e);
 			}
 		}
 		await last?.close().catch(log('free menu'));
@@ -338,6 +340,44 @@ export function showArtMenu(at) {
 }
 
 /**
+ * File info's right-click menu: its text size (the window grows with it), and the track's link.
+ * @param {MenuAt} at
+ * @param {{ zoom: (step: number) => void, copyLink: () => void, openInBrowser: () => void }} controls
+ */
+export function showFileInfoMenu(at, controls) {
+	return popup(
+		async () => ({
+			items: [
+				{ text: 'Bigger text', accel: 'Ctrl+=', action: () => controls.zoom(1) },
+				{ text: 'Smaller text', accel: 'Ctrl+-', action: () => controls.zoom(-1) },
+				{ text: 'Normal size', accel: 'Ctrl+0', action: () => controls.zoom(0) },
+				SEPARATOR,
+				{ text: 'Copy link', action: controls.copyLink },
+				{ text: 'Open in browser', action: controls.openInBrowser }
+			]
+		}),
+		at
+	);
+}
+
+/**
+ * The Stop button's right-click menu: the ways to stop (Ctrl+click is Stop after current too).
+ * @param {MenuAt} at
+ */
+export function showStopMenu(at) {
+	return popup(async () => {
+		const stopAfter = await api.stopAfterCurrentSet().catch(() => false);
+		return {
+			items: [
+				{ text: 'Stop', accel: 'V', action: () => stopPlayback().catch(log('stop')) },
+				{ text: 'Stop w/ fadeout', accel: 'Shift+V', action: () => stopWithFadeout().catch(log('stop with fadeout')) },
+				check('Stop after current', stopAfter, 'Ctrl+V', toggleStopAfterCurrent)
+			]
+		};
+	}, at);
+}
+
+/**
  * The analyzer's right-click menu, after Winamp's visualization one: the plug-in (MilkDrop,
  * Butterchurn, the only one here), then the main window's own analyzer modes.
  * @param {MenuAt} at
@@ -469,7 +509,7 @@ export function showPlaylistMenu(which, at) {
 		if (which === 'add') {
 			return {
 				items: [
-					{ text: 'Search YouTube Music', action: requestSearch },
+					{ text: 'Search YouTube Music', accel: 'Ctrl+J', action: requestSearch },
 					{ text: 'Open YouTube URL…', action: openUrlDialog },
 					SEPARATOR,
 					// Limusic's own Library page, in the full window, for now.
@@ -745,19 +785,10 @@ function applyPreset(preamp, bands) {
 	saveEq();
 }
 
-/** About ytminamp: the version and who it stands on. */
-export async function showAbout() {
-	const version = await getVersion().catch(() => '?');
-	await message(
-		`YTMinamp (limusic) ${version} (ytminamp.${YTMINAMP_RELEASE})\n\n` +
-			'Limusic with a classic Winamp 2.x skin mode.\n\n' +
-			'Built on Limusic (SimoHypers, GPL-3.0-or-later). Skin layout, marquee and analyzer after ' +
-			'Webamp (Jordan Eldredge and contributors, MIT); FFT from vis_classic (Mike Lynch, via ' +
-			'WACUP, MIT). The built-in skin is Nullsoft\u2019s Winamp 2.91 base skin. Winamp is a ' +
-			'trademark of its owner; this is an unofficial fan project.\n\n' +
-			'Full credits: docs/WINAMP-MODE.md',
-		{ title: 'About YTMinamp', kind: 'info' }
-	);
+/** About ytminamp: its own window, with the licence notices on a second tab (AboutWindow.svelte). */
+export function showAbout() {
+	const f = doubleFactor();
+	return api.openWinampPanel('about', ABOUT_SIZE.w * f, ABOUT_SIZE.h * f);
 }
 
 /**
@@ -797,12 +828,14 @@ function placementItems(text, kind) {
  */
 export function showMainMenu(switchSkin, at) {
 	return popup(async () => {
-		const [list, library] = await Promise.all([
+		const [list, library, stopAfter, limusicShown] = await Promise.all([
 			api.listWszSkins().catch((e) => {
 				log('list skins')(e);
 				return { dir: '', skins: [], current: null };
 			}),
-			libraryItems()
+			libraryItems(),
+			api.stopAfterCurrentSet().catch(() => false),
+			api.limusicWindowShown().catch(() => false)
 		]);
 		const repeat = playback.queue.repeat ?? 'off';
 		const art = uiState.art;
@@ -827,13 +860,17 @@ export function showMainMenu(switchSkin, at) {
 					text: 'Play',
 					items: [
 						{ text: 'URL…', accel: 'Ctrl+L', action: openUrlDialog },
-						{ text: 'Search…', accel: 'J', action: requestSearch },
+						{ text: 'Search…', accel: 'Ctrl+J', action: requestSearch },
 						{ text: 'Playlist from Library', items: library }
 					]
 				},
+				// WACUP's: what's playing (Alt+3 picks the selected row instead when a list is active).
+				{ text: 'View file info...', accel: 'Alt+3', enabled: !!playback.now, action: showNowFileInfo },
 				SEPARATOR,
+				// Limusic's own window is the library: its pages, search, playlists.
+				check('Media Library (Limusic window)', limusicShown, 'Alt+L', () => toggleLimusic().catch(log('media library'))),
 				check('Playlist Editor', uiState.pl.open, 'Alt+E', () => togglePanel('playlist')),
-				check('Search', uiState.search.open, '', () => togglePanel('search')),
+				check('Search', uiState.search.open, 'Alt+K', () => togglePanel('search')),
 				check('Equaliser', uiState.eq.open, 'Alt+G', () => togglePanel('eq')),
 				check('Album Art', art.open, 'Alt+A', () => togglePanel('art')),
 				check('Lyrics', uiState.lyrics.open, 'Alt+Y', () => togglePanel('lyrics')),
@@ -855,6 +892,9 @@ export function showMainMenu(switchSkin, at) {
 						{ text: 'Pause', accel: 'C', action: () => pause().catch(log('pause')) },
 						{ text: 'Stop', accel: 'V', action: () => stopPlayback().catch(log('stop')) },
 						{ text: 'Next', accel: 'B', action: () => nextTrack().catch(log('next')) },
+						SEPARATOR,
+						{ text: 'Stop w/ fadeout', accel: 'Shift+V', action: () => stopWithFadeout().catch(log('stop with fadeout')) },
+						check('Stop after current', stopAfter, 'Ctrl+V', toggleStopAfterCurrent),
 						SEPARATOR,
 						{ text: 'Back 5 seconds', accel: 'Left', action: () => seekBy(-5) },
 						{ text: 'Fwd 5 seconds', accel: 'Right', action: () => seekBy(5) },
@@ -893,7 +933,17 @@ export function showMainMenu(switchSkin, at) {
 									filters: [{ name: 'Winamp skins', extensions: ['wsz', 'zip'] }]
 								});
 								if (typeof picked !== 'string') return;
-								api.importWszSkin(picked).then(switchSkin, log('import skin'));
+								// Same file name as one already in the folder (and not that very file): ask.
+								const fileName = (/** @type {string} */ p) => p.split(/[\\/]/).pop()?.toLowerCase();
+								const same = list.skins.find((s) => fileName(s.path) === fileName(picked) && s.path !== picked);
+								const replace =
+									!!same &&
+									(await ask(`A skin named \u201c${same.name}\u201d is already in the skins folder. Replace it?`, {
+										title: 'Load Winamp skin',
+										kind: 'warning'
+									}));
+								if (same && !replace) return;
+								api.importWszSkin(picked, replace).then(switchSkin, log('import skin'));
 							}
 						},
 						{ text: 'Open skins folder', action: () => api.openSkinsDir().catch(log('open skins folder')) }

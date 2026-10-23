@@ -37,7 +37,7 @@
 	let frameCanvas;
 	/** @type {Map<string, ImageBitmap>} */
 	let sprites = new Map();
-	let inset = $state({ top: 20, bottom: 14, left: 11, right: 8 });
+	let inset = $state({ top: 20, bottom: 14, left: 11, right: 11 });
 	let fullscreen = $state(false);
 	let closePressed = false;
 	/** The visualization's area, inside the frame (all of it in fullscreen). */
@@ -262,14 +262,41 @@
 			if (autoSeconds > 0 && t > nextAuto) controls.next();
 			try {
 				viz.render({ audioLevels: { timeByteArray: wave, timeByteArrayL: wave, timeByteArrayR: wave } });
+				failures = 0;
 			} catch (e) {
-				// A broken preset shouldn't stop the window: move on to another.
+				// A broken preset shouldn't stop the window: move on to another. Every preset failing
+				// is something else (the GPU, the driver): stop rather than log it 60 times a second.
+				if (++failures >= MAX_FAILURES) {
+					viz = null;
+					error = `MilkDrop stopped: ${MAX_FAILURES} presets in a row failed (${e})`;
+					logUi('error', error);
+					return;
+				}
 				logUi('warn', `milkdrop preset ${presetName} failed: ${e}`);
 				controls.next(0);
 			}
 		}
 
-		(async () => {
+		/** Presets failed in a row; and how many before giving up. */
+		let failures = 0;
+		const MAX_FAILURES = 10;
+
+		// A GPU reset or a suspend can take the WebGL context away: start over once it's back,
+		// instead of a black window for the rest of the session.
+		const onContextLost = (/** @type {Event} */ e) => {
+			e.preventDefault();
+			viz = null;
+		};
+		const onContextRestored = () => {
+			logUi('info', 'milkdrop: WebGL context restored, starting again');
+			failures = 0;
+			error = '';
+			start();
+		};
+		canvas.addEventListener('webglcontextlost', onContextLost);
+		canvas.addEventListener('webglcontextrestored', onContextRestored);
+
+		const start = async () => {
 			try {
 				// Old webpack UMD bundles: where the export lands after CommonJS interop varies.
 				const unwrap = (/** @type {any} */ m, /** @type {string} */ key) =>
@@ -287,7 +314,9 @@
 				viz = butterchurn.createVisualizer(null, canvas, {
 					width: Math.round(a.w * dpr),
 					height: Math.round(a.h * dpr),
-					pixelRatio: dpr
+					// The sizes here and in fit() are device pixels already: Butterchurn multiplies
+					// by its pixelRatio, so anything but 1 renders dpr² of what the screen shows.
+					pixelRatio: 1
 				});
 				fit();
 				controls.next(0);
@@ -295,21 +324,29 @@
 				error = `MilkDrop couldn't start: ${e}`;
 				logUi('error', error);
 			}
-		})();
+		};
+		start();
 		raf = requestAnimationFrame(frame);
 		window.addEventListener('resize', fit);
 
 		setActivePart('milkdrop');
 		pinOneToOnePixels().catch((e) => logUi('error', `milkdrop zoom pin failed: ${e}`));
-		const reload = () =>
-			loadSkin()
+		// Only the newest load lands: switch skins twice quickly and the second wins, whichever
+		// finishes decoding first.
+		let skinLoads = 0;
+		const reload = () => {
+			const mine = ++skinLoads;
+			return loadSkin()
 				.then(async (payload) => {
-					sprites = await decodeAllSprites(payload.sprites);
+					const decoded = await decodeAllSprites(payload.sprites);
+					if (mine !== skinLoads) return;
+					sprites = decoded;
 					pledit = payload.pledit;
 					inset = frameInset(artFrame(sprites));
 					fit();
 				})
 				.catch((e) => logUi('error', `milkdrop skin failed: ${e}`));
+		};
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 
@@ -371,7 +408,11 @@
 			// would swallow a double-click's second click, and with it the fullscreen request.
 			else if (!fullscreen) press = { x: e.screenX, y: e.screenY };
 		};
+		/** The size the next frame sends, so a drag is one resize per frame, not per mouse move. */
+		let pendingSize = /** @type {{ w: number, h: number } | null} */ (null);
 		const onMove = (/** @type {MouseEvent} */ e) => {
+			// Released outside the window (the drag outran it): no mouseup comes, so end it here.
+			if (resizing && !(e.buttons & 1)) return onUp(e);
 			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
 				press = null;
 				win.startDragging();
@@ -380,7 +421,15 @@
 			if (!resizing) return;
 			const w = Math.max(MIN.w, resizing.w + e.screenX - resizing.x);
 			const h = Math.max(MIN.h, resizing.h + e.screenY - resizing.y);
-			resizeWinampPanel('milkdrop', w, h).catch(() => {});
+			const sendNow = pendingSize === null;
+			pendingSize = { w, h };
+			if (sendNow) {
+				requestAnimationFrame(() => {
+					const next = pendingSize;
+					pendingSize = null;
+					if (next) resizeWinampPanel('milkdrop', next.w, next.h).catch(() => {});
+				});
+			}
 		};
 		const onUp = (/** @type {MouseEvent} */ e) => {
 			press = null;

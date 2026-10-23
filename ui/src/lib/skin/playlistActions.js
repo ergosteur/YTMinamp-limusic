@@ -94,15 +94,19 @@ export function refreshLibrary() {
  * `loading: true` while the account's are still on their way.
  */
 export async function libraryPlaylists() {
+	let failed = false;
 	const refresh = refreshLibrary().catch((e) => {
 		console.error('library failed', e);
-		return [];
+		failed = true;
+		return null;
 	});
 	if (known) return { playlists: known, loading: false };
 	const local = await api.getLocalPlaylists().catch(() => []);
 	// A fetch that's nearly done (the window's own, from when it opened) is worth a moment.
 	const quick = await Promise.race([refresh, new Promise((r) => setTimeout(() => r(null), 150))]);
-	return quick ? { playlists: /** @type {import('$lib/api').BrowseItem[]} */ (quick), loading: false } : { playlists: local, loading: true };
+	if (quick) return { playlists: /** @type {import('$lib/api').BrowseItem[]} */ (quick), loading: false };
+	// The account's didn't come (in time, or at all): this machine's, still loading only if not failed.
+	return { playlists: local, loading: !failed };
 }
 
 /** Play a playlist from the library, replacing the queue, as Limusic's own page does. */

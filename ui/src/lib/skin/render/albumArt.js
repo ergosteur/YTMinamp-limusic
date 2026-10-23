@@ -1,21 +1,40 @@
 // The album art window: the playing track's cover in a frame from the skin. Winamp 5's Album Art
 // window uses the generic window frame (gen.bmp); most older skins don't have one, so those get
-// a frame cut from the equalizer window instead (eqmain.bmp — no EQ window here to use it), its
-// title covered by an "ALBUM ART" label. Sprite coordinates: Webamp's skinSprites.ts (GEN,
-// EQ_WINDOW) and gen-window.css / equalizer-window.css. Titles are in gen.bmp's own letters,
-// lit while the window has focus and dim when it doesn't, as in Winamp.
+// the playlist editor's frame instead (pledit.bmp, its title replaced by the window's own and its
+// bottom bar of buttons cut down to a plain edge), or failing that one cut from the equalizer
+// window (eqmain.bmp). Sprite coordinates: Webamp's skinSprites.ts (GEN, PLEDIT, EQ_WINDOW) and
+// gen-window.css / equalizer-window.css. Titles are in gen.bmp's own letters, lit while the
+// window has focus and dim when it doesn't, as in Winamp.
 
 import { drawText } from './marquee.js';
 import { isLit } from '../focus.js';
+import { PLEDIT } from './playlist.js';
 
-/** @typedef {'gen' | 'eq'} ArtFrame */
+/** @typedef {'gen' | 'pl' | 'eq'} ArtFrame */
 /** @typedef {{ x: number, y: number, w: number, h: number }} Rect */
 
 /** Frame thickness around the picture, per frame. */
 const INSET = {
-	gen: { top: 20, bottom: 14, left: 11, right: 8 },
+	// gen.bmp's right side is 8 px against the left's 11: widened to match, so what's inside sits
+	// in the middle (drawGenFrame fills the difference).
+	gen: { top: 20, bottom: 14, left: 11, right: 11 },
+	// The playlist's left tile, mirrored on the right (its own right tile holds the scrollbar's
+	// groove); of its bottom, the plain strip under the buttons.
+	pl: { top: 20, bottom: 9, left: 12, right: 12 },
 	eq: { top: 14, bottom: 4, left: 4, right: 4 }
 };
+/** pledit.bmp's side tile height. */
+const PL_TILE_H = 29;
+/** pledit.bmp's bottom bar height; its title piece's end caps and a plain column between them. */
+const PL_BOTTOM_H = 38;
+const PL_TITLE_CAP = 4;
+const PL_TITLE_PLAIN_X = 5;
+/** The bottom-left piece's column (between its first two buttons) stretched along the bottom: its
+ *  last rows, under the buttons, are a plain edge in every skin seen. The filler tile isn't: skins
+ *  only ever show it on a widened playlist, and some (Musicmatch 9) give it curved ends. */
+const PL_BOTTOM_FILL_X = 39;
+/** The top-right piece's rows that hold its buttons (close at 3-11), above the groove's start. */
+const PL_CORNER_BUTTONS_H = 12;
 
 /** gen.bmp's titlebar pieces: x only, the row is TOP_Y's. */
 const GEN_TOP = { left: 0, leftEnd: 26, centerFill: 52, rightEnd: 78, fill: 104, right: 130, w: 25, h: 20 };
@@ -98,6 +117,12 @@ function lettersOf(sheet) {
 /** The close button, relative to the frame's top-right corner (same spot on both frames). */
 export const ART_CLOSE = { dx: -2 - 9, y: 3, w: 9, h: 9 };
 
+/** Whether `e` is on the close button of a frame `width` wide at the window's top-left. */
+export function onCloseButton(/** @type {MouseEvent} */ e, /** @type {number} */ width) {
+	const x = width + ART_CLOSE.dx;
+	return e.clientX >= x && e.clientX < x + ART_CLOSE.w && e.clientY >= ART_CLOSE.y && e.clientY < ART_CLOSE.y + ART_CLOSE.h;
+}
+
 /** The titlebar's height in `frame`: double-click it to float or dock, like the other panels. */
 export const artTitleHeight = (/** @type {ArtFrame} */ frame) => INSET[frame].top;
 /** The frame's thickness on each side in `frame`. */
@@ -105,7 +130,7 @@ export const frameInset = (/** @type {ArtFrame} */ frame) => INSET[frame];
 
 /** Which frame the loaded skin gets. @param {Map<string, unknown>} sprites @returns {ArtFrame} */
 export function artFrame(sprites) {
-	return sprites.has('gen') ? 'gen' : 'eq';
+	return sprites.has('gen') ? 'gen' : sprites.has('pledit') ? 'pl' : 'eq';
 }
 
 /**
@@ -189,7 +214,7 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed, caption = nu
 }
 
 /**
- * Just the frame — gen.bmp's, or the one cut from eqmain.bmp — with `label` on its titlebar.
+ * Just the frame — gen.bmp's, else the playlist's or the EQ's (see `artFrame`) — with `label` on its titlebar.
  * Album art's, lyrics', MilkDrop's, the Open URL dialog's.
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
@@ -200,13 +225,17 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed, caption = nu
  */
 export function drawFrame(ctx, sprites, at, closePressed, label, lit) {
 	const gen = sprites.get('gen');
+	const pl = sprites.get('pledit');
 	const eq = sprites.get('eqmain');
 	const text = sprites.get('text');
-	if (artFrame(sprites) === 'gen' && gen) {
+	const frame = artFrame(sprites);
+	if (frame === 'gen' && gen) {
 		const letters = lettersOf(gen);
 		drawGenFrame(ctx, gen, at, closePressed, letters ? label : '', lit);
 		// A gen.bmp without its letters: the title in text.bmp instead.
 		if (!letters && text) drawLabel(ctx, text, label, at, 7);
+	} else if (frame === 'pl' && pl) {
+		drawPlFrame(ctx, pl, text, at, closePressed, label, lit);
 	} else if (eq) {
 		drawEqFrame(ctx, eq, at, closePressed, lit);
 		if (text) drawLabel(ctx, text, label, at, 4);
@@ -274,13 +303,21 @@ function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed, title, lit) {
 	blit(ctx, sheet, piece(GEN_TOP.right), x + w - GEN_TOP.w, y);
 	if (closePressed) blit(ctx, sheet, GEN.closeSelected, x + w + ART_CLOSE.dx, y + ART_CLOSE.y);
 
+	// The right side's own pieces at the edge, their inner column stretched over the rest of the
+	// (widened) inset.
+	const rightX = x + w - GEN.middleRight.w;
+	const extra = i.right - GEN.middleRight.w;
+	const right = (/** @type {Rect} */ r, /** @type {number} */ ty) => {
+		blit(ctx, sheet, r, rightX, ty);
+		ctx.drawImage(sheet, r.x, r.y, 1, r.h, rightX - extra, ty, extra, r.h);
+	};
 	const sideBottom = y + h - i.bottom - GEN.middleLeftBottom.h;
 	for (let ty = y + i.top; ty < sideBottom; ty += GEN.middleLeft.h) {
 		blit(ctx, sheet, GEN.middleLeft, x, ty);
-		blit(ctx, sheet, GEN.middleRight, x + w - i.right, ty);
+		right(GEN.middleRight, ty);
 	}
 	blit(ctx, sheet, GEN.middleLeftBottom, x, sideBottom);
-	blit(ctx, sheet, GEN.middleRightBottom, x + w - i.right, sideBottom);
+	right(GEN.middleRightBottom, sideBottom);
 
 	// The two 125px bottom caps over a tiled fill; narrower than 250, each keeps its outer half.
 	const by = y + h - i.bottom;
@@ -289,6 +326,61 @@ function drawGenFrame(ctx, sheet, { x, y, w, h }, closePressed, title, lit) {
 	const rightW = Math.min(GEN.bottomRight.w, w - leftW);
 	blit(ctx, sheet, GEN.bottomLeft, x, by, leftW);
 	blit(ctx, sheet, GEN.bottomRight, x + w - rightW, by, rightW, GEN.bottomRight.w - rightW);
+}
+
+/**
+ * pledit.bmp, as a plain window: the playlist's top bar (corners, tiles, and its title piece's
+ * plain middle under `label` in text.bmp), its left side tile and bottom-left corner, mirrored for
+ * the right (whose own tile holds the scrollbar's groove, and corner the resize grip), and of its
+ * bottom bar only the plain strip along the very bottom, no buttons.
+ * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} sheet @param {ImageBitmap | undefined} text
+ * @param {Rect} at @param {boolean} closePressed @param {string} label @param {boolean} lit
+ */
+function drawPlFrame(ctx, sheet, text, { x, y, w, h }, closePressed, label, lit) {
+	const i = INSET.pl;
+	const top = (/** @type {Rect} */ r) => (lit ? { ...r, y: 0 } : r);
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(x, y, w, h);
+	ctx.clip();
+
+	for (let tx = x + PLEDIT.topLeft.w; tx < x + w - PLEDIT.topRight.w; tx += PLEDIT.topTile.w) {
+		blit(ctx, sheet, top(PLEDIT.topTile), tx, y);
+	}
+	const labelW = label.length * 5;
+	// Only with room for both corners and the title piece's caps.
+	if (text && labelW + 2 * (PLEDIT.topLeft.w + PL_TITLE_CAP + 3) <= w) {
+		const t = top(PLEDIT.title);
+		const lx = x + Math.floor((w - labelW) / 2);
+		ctx.drawImage(sheet, t.x + PL_TITLE_PLAIN_X, t.y, 1, t.h, lx - 3, y, labelW + 6, t.h);
+		ctx.drawImage(sheet, t.x, t.y, PL_TITLE_CAP, t.h, lx - 3 - PL_TITLE_CAP, y, PL_TITLE_CAP, t.h);
+		ctx.drawImage(sheet, t.x + t.w - PL_TITLE_CAP, t.y, PL_TITLE_CAP, t.h, lx + labelW + 3, y, PL_TITLE_CAP, t.h);
+		drawText(ctx, text, label, lx, y + 7);
+	}
+
+	// The bottom bar's last rows: one plain column stretched along, and the corner as wide as the
+	// side (any wider reaches under the buttons and their labels).
+	const by = y + h - i.bottom;
+	const row = PL_BOTTOM_H - i.bottom;
+	const bl = PLEDIT.bottomLeft;
+	ctx.drawImage(sheet, bl.x + PL_BOTTOM_FILL_X, bl.y + row, 1, i.bottom, x, by, w, i.bottom);
+	/** The left side and its corners; drawn again mirrored for the right. */
+	const leftEdge = (/** @type {number} */ ex) => {
+		blit(ctx, sheet, top(PLEDIT.topLeft), ex, y);
+		for (let ty = y + i.top; ty < by; ty += PL_TILE_H) blit(ctx, sheet, PLEDIT.leftTile, ex, ty);
+		ctx.drawImage(sheet, bl.x, bl.y + row, i.left, i.bottom, ex, by, i.left, i.bottom);
+	};
+	leftEdge(x);
+	ctx.save();
+	ctx.translate(2 * x + w, 0);
+	ctx.scale(-1, 1);
+	leftEdge(x);
+	ctx.restore();
+	// The real top-right corner's buttons: its rows above the side, where the groove begins.
+	const tr = top(PLEDIT.topRight);
+	ctx.drawImage(sheet, tr.x, tr.y, tr.w, PL_CORNER_BUTTONS_H, x + w - tr.w, y, tr.w, PL_CORNER_BUTTONS_H);
+	if (closePressed) blit(ctx, sheet, PLEDIT.closeSelected, x + w + ART_CLOSE.dx, y + ART_CLOSE.y);
+	ctx.restore();
 }
 
 /**

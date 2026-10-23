@@ -162,7 +162,8 @@ function drawGraph(ctx, sheet, eq, gx, gy) {
 	const S = SPRITES;
 	const H = S.graph.h;
 	ctx.drawImage(sheet, S.graph.x, S.graph.y, S.graph.w, H, gx, gy, S.graph.w, H);
-	const preampY = Math.round((eq.preamp / 100) * (H - 1));
+	// The same way up as the bands: the slider's top (100) is the graph's top.
+	const preampY = Math.round(((100 - eq.preamp) / 100) * (H - 1));
 	ctx.drawImage(sheet, S.preampLine.x, S.preampLine.y, S.preampLine.w, 1, gx, gy + preampY, S.preampLine.w, 1);
 
 	const xs = eq.bands.map((_, i) => i * 12);

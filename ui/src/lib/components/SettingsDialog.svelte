@@ -49,6 +49,7 @@
 	import GlobalHotkeysSettings from '$lib/components/GlobalHotkeysSettings.svelte';
 	import LyricsSourcesSettings from '$lib/components/LyricsSourcesSettings.svelte';
 	import LanguagePicker from '$lib/components/LanguagePicker.svelte';
+	import { APP_NAME, fullVersion } from '$lib/skin/brand.js';
 
 	type TabId =
 		| 'general'
@@ -107,8 +108,8 @@
 	getVersion().then((v) => (version = v));
 	// Release candidates ship only what the updater installs, so an .rpm, .deb or AUR install has
 	// nothing to take from the beta channel. Shown in dev, which is never the AppImage either.
-	let betaAvailable = $state(import.meta.env.DEV);
-	api.canSelfUpdate().then((v) => (betaAvailable ||= v)).catch(() => {});
+	// ytminamp: no beta channel (it would install Limusic's release candidates): see skin/updates.js.
+	const betaAvailable = false;
 	// Result of the last "Check for updates" click — shown inline (a toast renders behind the modal).
 	let updateResult = $state<{ message: string; error: boolean } | null>(null);
 
@@ -742,12 +743,12 @@
 							class="mb-7 rounded-xl border bg-gradient-to-br from-primary/8 to-transparent px-4 py-4"
 						>
 							<div class="flex items-center gap-2">
-								<span class="font-heading text-lg font-bold">Limusic</span>
+								<span class="font-heading text-lg font-bold">{APP_NAME}</span>
 								{#if version}
 									<span
 										class="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-semibold text-primary"
 									>
-										v{version}
+										v{fullVersion(version)}
 									</span>
 								{/if}
 							</div>

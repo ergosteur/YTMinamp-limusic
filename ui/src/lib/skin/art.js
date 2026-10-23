@@ -39,7 +39,10 @@ function load(src, original) {
 		shown = img;
 	};
 	img.onerror = () => {
-		if (wanted === original && src !== original) load(original, original);
+		if (wanted !== original) return;
+		if (src !== original) load(original, original);
+		// No cover at all: none shown, rather than the last track's.
+		else shown = null;
 	};
 	img.src = src;
 }

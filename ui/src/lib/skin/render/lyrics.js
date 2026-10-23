@@ -20,6 +20,9 @@ const FONT_PX = 11;
 let wrapped = { key: '', lyricsKey: '', rows: /** @type {Row[]} */ ([]) };
 /** The view's scroll, in rows, easing towards where it should be. */
 let shown = 0;
+/** The lyrics last drawn, and a number that changes with them (see `wrapped.lyricsKey`). */
+let lyricsSeen = /** @type {object | null} */ (null);
+let lyricsId = 0;
 
 /**
  * Break each lyric line, and its romanization and translation when shown, into rows that fit
@@ -95,7 +98,12 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		ctx.fillText(message, cx, inner.y + inner.h / 2);
 	} else {
 		const lyrics = state.lyrics;
-		const lyricsKey = `${lyrics.provider}|${lyrics.lines.length}|${lyrics.lines[0]?.text}`;
+		// Each fetch is a new object: two songs' lyrics can share a provider, length and first line.
+		if (lyrics !== lyricsSeen) {
+			lyricsSeen = lyrics;
+			lyricsId++;
+		}
+		const lyricsKey = String(lyricsId);
 		const key = `${lyricsKey}|${inner.w}|${ctx.font}|${lyricsShow.romanized}|${lyricsShow.translated}`;
 		if (wrapped.key !== key) {
 			// New lyrics start from the top; the same ones rewrapped (resized, zoomed) ease over.

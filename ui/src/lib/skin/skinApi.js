@@ -18,7 +18,7 @@ import { playRow, searchRows, songsIn } from './searchKinds.js';
 import { PL_H, PL_W, VISIBLE_ROWS, listRows, maxScroll } from './render/playlist.js';
 import { LYRICS_W, dockedLayout } from './layout.js';
 import { EQ_H, EQ_W } from './render/equalizer.js';
-import { setScale } from './pixels.js';
+import { announceDoubleSize, doubleFactor, setScale } from './pixels.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { artSize } from './render/albumArt.js';
 
@@ -72,7 +72,7 @@ export function setRepeatMode(mode) {
 }
 
 export function togglePlayPause() {
-	return api.togglePause();
+	return afterStop() ?? api.togglePause();
 }
 
 /** @param {number} positionSecs */
@@ -98,17 +98,82 @@ export function stopPlayback() {
 
 /** Winamp's Play (X): carry on if paused, back to the start if already playing. */
 export function play() {
-	return playback.paused ? api.togglePause() : api.seek(0);
+	return afterStop() ?? (playback.paused ? api.togglePause() : api.seek(0));
 }
 
 /** Winamp's Pause (C): pause, or carry on if paused. */
 export function pause() {
-	return api.togglePause();
+	return afterStop() ?? api.togglePause();
 }
 
-/** Back or forward `secs` (the arrow keys). @param {number} secs */
+/** Stopped by "Stop after current": Play goes on to the next track (this one is over), else null. */
+function afterStop() {
+	if (!uiState.stoppedAfterCurrent) return null;
+	uiState.stoppedAfterCurrent = false;
+	return api.nextTrack();
+}
+
+/**
+ * Winamp's "Stop after current" (Ctrl+V): on, the playing track is the last before a stop. Kept in
+ * Rust (winamp.rs), which sets it up in mpv; this window watches for the stop (`followStopAfter`),
+ * so other windows hand the toggle over.
+ */
+export function toggleStopAfterCurrent() {
+	if (getCurrentWindow().label !== 'winamp') {
+		emitTo('winamp', 'winamp-key', 'stopAfter').catch(log('stop after current'));
+		return;
+	}
+	const on = !uiState.stopAfter;
+	api.setStopAfterCurrent(on).then(() => {
+		uiState.stopAfter = on;
+		flashMarquee(`Stop after current: ${on ? 'On' : 'Off'}`);
+	}, log('stop after current'));
+}
+
+/** Per frame, in the Winamp window: the stop happened (mpv paused at the very end), so it's spent. */
+export function followStopAfter() {
+	if (uiState.stoppedAfterCurrent && (!playback.paused || playback.position < playback.duration - 1.5)) {
+		uiState.stoppedAfterCurrent = false;
+	}
+	if (!uiState.stopAfter || !playback.paused || playback.duration <= 0 || playback.position < playback.duration - 1) return;
+	uiState.stopAfter = false;
+	uiState.stoppedAfterCurrent = true;
+	api.setStopAfterCurrent(false).catch(log('stop after current'));
+	flashMarquee('Stopped after current');
+}
+
+let fadingOut = false;
+/** Winamp's "Stop w/ fadeout" (Shift+V): the volume down over a second and a half, then stop. */
+export async function stopWithFadeout() {
+	if (playback.paused || fadingOut) return;
+	fadingOut = true;
+	const from = playback.volume;
+	try {
+		for (let i = 1; i <= 15 && !playback.paused; i++) {
+			// Whole steps: Rust's set_volume takes an integer, and quietly refuses anything else.
+			dragVolume(Math.round(from * (1 - i / 15)));
+			await new Promise((r) => setTimeout(r, 100));
+		}
+		if (!playback.paused) await api.togglePause();
+	} finally {
+		// Back where it was, live only: the saved level never moved (dragVolume doesn't save).
+		dragVolume(from);
+		fadingOut = false;
+	}
+}
+
+/** Where the last arrow-key seek went, and when: a held key seeks on from there, since the
+ *  position only comes back about 4 times a second. */
+let seekTarget = { secs: 0, at: 0 };
+
+/** Back or forward `secs` (the arrow keys), within the track. @param {number} secs */
 export function seekBy(secs) {
-	api.seek(Math.max(0, playback.position + secs)).catch(log('seek'));
+	const now = performance.now();
+	const from = now - seekTarget.at < 600 ? seekTarget.secs : playback.position;
+	const end = playback.duration > 0 ? playback.duration - 1 : Infinity;
+	const to = Math.max(0, Math.min(end, from + secs));
+	seekTarget = { secs: to, at: now };
+	api.seek(to).catch(log('seek'));
 }
 
 /** Volume up or down by `step`%, shown in the title (the arrow keys, the wheel). Limusic's own
@@ -153,7 +218,7 @@ const log = (/** @type {string} */ what) => (/** @type {unknown} */ e) => consol
 function syncFloating(kind, was, now, size) {
 	if (now && !was) {
 		const { w, h } = pref(`floatSize-${kind}`, size());
-		api.openWinampPanel(kind, w, h).catch(log(`open ${kind} window`));
+		api.openWinampPanel(kind, w * doubleFactor(), h * doubleFactor()).catch(log(`open ${kind} window`));
 	} else if (was && !now) {
 		api.closeWinampPanel(kind).catch(log(`close ${kind} window`));
 	}
@@ -284,6 +349,8 @@ async function doubleFits() {
 export async function applyDoubleSize() {
 	await setScale(uiState.doubleSize ? 2 : 1).catch(log('double size'));
 	resizeToLayout();
+	// The floating windows (all but MilkDrop's) follow (pixels.js `followDoubleSize`).
+	announceDoubleSize(uiState.doubleSize);
 }
 
 /** The lyrics' text sizes, smallest to largest; 1 is the playlist editor's 11 px. */
@@ -369,6 +436,8 @@ export function followQueue(visible = VISIBLE_ROWS) {
 	const replaced = first !== followed.first;
 	if (!replaced && currentIndex === followed.current) return;
 	followed = { first, current: currentIndex };
+	// Marks are row numbers: on a new queue they'd pick out tracks nobody chose.
+	if (replaced) selectNone(view);
 	if (view.draggingScroll) return;
 	const inView = currentIndex >= view.scroll && currentIndex < view.scroll + visible;
 	if (replaced || !inView) {
@@ -434,6 +503,8 @@ export function toggleMilkdrop() {
 /** Where File info's track goes (FileInfoWindow.svelte reads it; localStorage is every window's). */
 export const FILE_INFO_KEY = 'ytminamp-file-info';
 export const FILE_INFO_SIZE = { w: 420, h: 200 };
+/** The About window (AboutWindow.svelte). */
+export const ABOUT_SIZE = { w: 420, h: 260 };
 
 /** Show `item` in the File info window, opening it if it isn't. @param {import('$lib/api').SongItem} item */
 export function showFileInfo(item) {
@@ -442,7 +513,8 @@ export function showFileInfo(item) {
 	} catch (e) {
 		return log('file info')(e);
 	}
-	api.openWinampPanel('fileinfo', FILE_INFO_SIZE.w, FILE_INFO_SIZE.h).catch(log('file info'));
+	const f = doubleFactor();
+	api.openWinampPanel('fileinfo', FILE_INFO_SIZE.w * f, FILE_INFO_SIZE.h * f).catch(log('file info'));
 }
 
 /** File info for what's playing (the title's double-click and right-click menu). */
@@ -490,6 +562,9 @@ export function toggleMilkdropOnStart() {
 export function nowAsItem() {
 	const now = playback.now;
 	if (!now) return null;
+	// The queue's own row when it's this track: it carries more (the album's id, the play count).
+	const row = playback.queue.items[playback.queue.currentIndex];
+	if (row?.video_id === now.videoId) return row;
 	return {
 		video_id: now.videoId,
 		title: now.title,
@@ -519,12 +594,12 @@ export function fileInfoForSelection() {
 
 /** EQ PRESETS → Save current as preset...: the small naming dialog (EqPresetWindow.svelte). */
 export function openEqPresetDialog() {
-	api.openWinampPanel('eqsave', 275, 70).catch((e) => console.error('open eq preset dialog failed', e));
+	api.openWinampPanel('eqsave', 275 * doubleFactor(), 70 * doubleFactor()).catch((e) => console.error('open eq preset dialog failed', e));
 }
 
 /** ADD → Open YouTube URL: the small dialog window (OpenUrlWindow.svelte). */
 export function openUrlDialog() {
-	api.openWinampPanel('url', 275, 70).catch((e) => console.error('open url dialog failed', e));
+	api.openWinampPanel('url', 275 * doubleFactor(), 70 * doubleFactor()).catch((e) => console.error('open url dialog failed', e));
 }
 
 /** Focus the search box and pulse it three times. */

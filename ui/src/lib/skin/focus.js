@@ -3,7 +3,7 @@
 // docked into one, the active one is the one last clicked (the main window to start with). A
 // floating panel is its own only window (`setActivePart` with its kind when it opens).
 
-/** @typedef {'main' | import('./layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo'} Part */
+/** @typedef {'main' | import('./layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about'} Part */
 
 let windowFocused = typeof document !== 'undefined' && document.hasFocus();
 /** @type {Part} */

@@ -40,6 +40,10 @@ export function toggleLyricsShow(what) {
 }
 
 let requested = '';
+/** Failed fetches per video, and how often and how far apart they're tried again. */
+const retries = new Map();
+const LYRICS_RETRIES = 2;
+const LYRICS_RETRY_MS = 15_000;
 /** @type {LyricsState} */
 let current = { status: 'none', lyrics: null };
 
@@ -78,7 +82,17 @@ export function lyricsNow() {
 					: { status: l.instrumental ? 'instrumental' : 'ready', lyrics: l };
 			})
 			.catch(() => {
-				if (requested === id) current = { status: 'missing', lyrics: null };
+				if (requested !== id) return;
+				current = { status: 'missing', lyrics: null };
+				// A failed fetch (offline for a moment) isn't "no lyrics": ask again in a while, a
+				// couple of times, if the song is still on. A missing result above isn't retried.
+				const tries = (retries.get(id) ?? 0) + 1;
+				retries.set(id, tries);
+				if (tries <= LYRICS_RETRIES) {
+					setTimeout(() => {
+						if (requested === id) requested = '';
+					}, LYRICS_RETRY_MS * tries);
+				}
 			});
 	}
 	return current;

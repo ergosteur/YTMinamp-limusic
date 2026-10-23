@@ -4,7 +4,7 @@
 	// `playback` store every other window reads ($lib/player.svelte) — there is no second copy of
 	// playback state, same reasoning as the mini player.
 	import { onMount } from 'svelte';
-	import { emitTo, listen } from '@tauri-apps/api/event';
+	import { emit, emitTo, listen } from '@tauri-apps/api/event';
 	import { playback } from '$lib/player.svelte';
 	import { logUi } from '$lib/errlog';
 	import { winampAudioInfo } from '$lib/api';
@@ -30,6 +30,7 @@
 		setArtCaption,
 		SEARCH_INPUT_ID,
 		followQueue,
+		followStopAfter,
 		flashMarquee,
 		loadSkin,
 		openSearch,
@@ -41,7 +42,7 @@
 		setPanelOpen,
 		togglePanel
 	} from '../skin/skinApi.js';
-	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
+	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showStopMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
 	import { refreshLibrary } from '../skin/playlistActions.js';
 
@@ -111,11 +112,15 @@
 		// The DPI fix first, then double size on top of it, then everything else remembered.
 		const pinned = pinOneToOnePixels().catch((e) => logUi('error', `winamp zoom pin failed: ${e}`));
 
+		/** Only the newest skin lands: two quick picks settle on the second, whichever decodes first. */
+		let skinLoads = 0;
 		/** @param {Promise<import('$lib/api').SkinPayload>} loading */
-		const applySkin = (loading) =>
-			loading
+		const applySkin = (loading) => {
+			const mine = ++skinLoads;
+			return loading
 				.then(async (payload) => {
 					const decoded = await decodeAllSprites(payload.sprites);
+					if (mine !== skinLoads) return;
 					if (!decoded.get('main')) throw new Error('skin has no main.bmp');
 					viscolor = payload.viscolor;
 					region = payload.region;
@@ -123,13 +128,12 @@
 					sprites = decoded;
 					shapedFor = null; // new region.txt: reshape on the next frame
 					status = '';
-					// gen.bmp or the EQ fallback: the docked art's size depends on which.
+					// gen.bmp or a fallback frame: the docked art's size depends on which.
 					uiState.art.frame = artFrame(decoded);
 					resizeToLayout();
-					// Floating panel windows draw from the same skin.
-					for (const kind of ['art', 'playlist', 'search', 'eq', 'lyrics', 'url']) {
-						emitTo(`winamp-${kind}`, 'winamp-skin-changed').catch(() => {});
-					}
+					// Every other Winamp window draws from the same skin. Once, to all: `listen` hears an
+					// event whichever window it's sent to, so one per window reloads each of them that often.
+					emit('winamp-skin-changed').catch(() => {});
 				})
 				.catch((e) => {
 					console.error('failed to load winamp skin', e);
@@ -137,6 +141,7 @@
 					// A failed switch keeps the old skin; only a failed first load has nothing to show.
 					if (sprites.size === 0) status = `error: ${e}`;
 				});
+		};
 
 		// Panels need the skin (album art's size depends on its frame), so they come back after it.
 		applySkin(loadSkin())
@@ -163,6 +168,8 @@
 									? showTitleMenu(at)
 								: target.kind === 'vis'
 									? showVisMenu(at)
+								: target.kind === 'stop'
+									? showStopMenu(at)
 						: target.kind === 'presets'
 							? showPresetsMenu(at)
 							: target.kind === 'lyrics'
@@ -223,9 +230,9 @@
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
 		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo'} */ (e.payload);
-			// The Open URL, save-preset and file info windows: nothing here tracks them.
-			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo') return;
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about'} */ (e.payload);
+			// The Open URL, save-preset, file info and about windows: nothing here tracks them.
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
 			if (view.dock === 'float') view.open = false;
@@ -287,6 +294,7 @@
 			);
 			ctx.restore();
 			followQueue();
+			followStopAfter();
 			const searchPanel = layout.panels.find((p) => p.kind === 'search');
 			if (kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
 			const lyricsPanel = layout.panels.find((p) => p.kind === 'lyrics');

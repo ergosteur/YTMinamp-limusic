@@ -1,0 +1,41 @@
+YTMinamp (limusic): third-party notices for its Winamp mode
+
+YTMinamp is Limusic (by SimoHypers, GPL-3.0-or-later) with a classic Winamp 2.x skin mode:
+  https://github.com/SimoHypers/limusic
+  https://github.com/ergosteur/YTMinamp-limusic
+
+The code below is used under the MIT License, whose notices follow. Winamp is a trademark of its
+owner; the built-in skin is Nullsoft's Winamp 2.91 base skin, not under an open licence. This is
+an unofficial fan project.
+
+Webamp (https://github.com/captbaritone/webamp): skin layout, marquee, analyzer drawing, FFT.
+  Copyright (c) 2015 Jordan Eldredge
+
+vis_classic (https://github.com/WACUP/vis_classic): the FFT Webamp's comes from.
+  Copyright (c) 1998-2018 Mike Lynch (original plug-in author)
+  Copyright (c) 2018 WACUP - WinAmp Community Update Project
+
+Butterchurn (https://github.com/jberg/butterchurn) and butterchurn-presets
+(https://github.com/jberg/butterchurn-presets): the MilkDrop window. MilkDrop is Ryan Geiss's;
+the presets are their authors'.
+  Copyright (c) 2013-2018 Jordan Berg
+
+All of the above, under these terms:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

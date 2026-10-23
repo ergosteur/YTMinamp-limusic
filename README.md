@@ -27,6 +27,8 @@ See [docs/WINAMP-MODE.md](docs/WINAMP-MODE.md), including the
 Butterchurn and the skin authors. An unofficial fan project, not affiliated with Winamp or
 Nullsoft. **The rest of this README is upstream Limusic's.**
 
+> YTMinamp is developed with assistance from AI coding agents.
+
 ---
 
 <div align="center">

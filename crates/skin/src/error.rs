@@ -10,6 +10,8 @@ pub enum Error {
     NotABmp { name: String },
     #[error("{name}: unsupported BMP variant (bpp={bpp}, compression={compression})")]
     UnsupportedBmp { name: String, bpp: u16, compression: u32 },
+    #[error("{name}: {width}×{height} is no size for a skin bitmap")]
+    BmpSize { name: String, width: u32, height: u32 },
     #[error("{name}: truncated or corrupt BMP data")]
     TruncatedBmp { name: String },
 }

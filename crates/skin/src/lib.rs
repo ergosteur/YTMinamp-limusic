@@ -24,6 +24,11 @@ pub use region::Region;
 
 use archive::SkinArchive;
 
+/// Pixels decoded across a whole skin before the rest of its bitmaps are skipped: 64 MiB of RGBA.
+/// A real skin's sprites come to well under a megapixel; a hostile one could otherwise ship
+/// hundreds of tiny files each claiming `bmp::MAX_SIDE` squared.
+const MAX_PIXELS: usize = 16 << 20;
+
 /// A fully parsed classic skin: every `*.bmp` found in the archive, decoded, keyed by its
 /// lowercase filename without extension (`"main"`, `"cbuttons"`, `"eqmain"`, ...); the window
 /// shape from `region.txt` (`None` if the skin doesn't have one — callers fall back to a plain
@@ -48,14 +53,21 @@ impl Skin {
 pub fn load(bytes: &[u8]) -> Result<Skin, Error> {
     let mut archive = SkinArchive::open(bytes)?;
 
-    let bmp_names: Vec<String> =
+    let mut bmp_names: Vec<String> =
         archive.basenames().filter(|name| name.ends_with(".bmp")).map(str::to_owned).collect();
+    // main.bmp first, so the budget below never skips it.
+    bmp_names.sort_by_key(|name| name != "main.bmp");
 
     let mut sprites = HashMap::new();
+    let mut pixels = 0usize;
     for name in bmp_names {
+        if pixels >= MAX_PIXELS {
+            break;
+        }
         let Some(data) = archive.read(&name) else { continue };
         match bmp::decode(&name, &data) {
             Ok(image) => {
+                pixels += image.width as usize * image.height as usize;
                 let key = name.trim_end_matches(".bmp").to_owned();
                 sprites.insert(key, image);
             }

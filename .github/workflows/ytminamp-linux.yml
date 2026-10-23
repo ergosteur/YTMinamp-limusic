@@ -419,7 +419,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          FILES=(target/release/bundle/appimage/ytminamp_${VERSION}_*.AppImage $([ "${{ steps.deb_check.outcome }}" = success ] && echo target/release/bundle/deb/ytminamp_${VERSION}_*.deb))
+          FILES=(target/release/bundle/appimage/ytminamp_${VERSION}_*.AppImage $([ "${{ steps.deb_check.outcome }}" = success ] && echo target/release/bundle/deb/ytminamp_${VERSION}_*.deb || true))
           [ ${#FILES[@]} -gt 0 ] || { echo "::error::nothing to attach"; find target/release/bundle -maxdepth 2; exit 1; }
           # Named for the whole tag (ytminamp_1.3.0-ytminamp.3_...), so one release's files can't be
           # mistaken for another's: the bundler only knows the Limusic version.

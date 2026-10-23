@@ -580,6 +580,15 @@ impl Player {
     /// seek: inside the cache it is instant and never touches the network, past it mpv has to open
     /// a *fresh* HTTP request for the new offset. A report that says "seeking hangs" is answered by
     /// which of those it was, and nothing used to record it. Issue #188.
+    /// Pause at the end of the current file instead of advancing (mpv's `keep-open=always`), for a
+    /// "stop after current"; off, mpv goes on into the next entry as usual. The active deck's: a
+    /// crossfade would start the next track before the end anyway, so the caller turns that off
+    /// for as long as this is on.
+    pub fn set_keep_open(&self, on: bool) -> Result<(), Error> {
+        self.mpv().set_property("keep-open", if on { "always" } else { "no" })?;
+        Ok(())
+    }
+
     pub fn seek(&self, position_secs: f64) -> Result<(), Error> {
         // Scrubbing is aimed at the track that is playing, which during an overlap is the
         // incoming deck. The outgoing one has nothing to do with the new position.

@@ -1,0 +1,188 @@
+<script>
+	// About (label "winamp-about", see +layout.svelte and winamp.rs): the version, who it stands
+	// on, and on a second tab the licence notices (ui/static/third-party-notices.txt, shipped in
+	// the app), in the skin's generic frame and the playlist's colours, like File info. WACUP's About
+	// box has tabs too. Opened from the main menu's "About ytminamp…" and the main window's About
+	// button.
+	import { onMount } from 'svelte';
+	import { listen } from '@tauri-apps/api/event';
+	import { getVersion } from '@tauri-apps/api/app';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { closeWinampPanel, openExternal } from '$lib/api';
+	import { logUi } from '$lib/errlog';
+	import { decodeAllSprites } from '../skin/render/spritesheet.js';
+	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
+	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { ABOUT_SIZE, loadSkin } from '../skin/skinApi.js';
+	import { isLit, setActivePart } from '../skin/focus.js';
+	import { APP_NAME, fullVersion } from '../skin/brand.js';
+
+	const { w: WIDTH, h: HEIGHT } = ABOUT_SIZE;
+
+	/** @type {HTMLCanvasElement} */
+	let canvas;
+	/** @type {Map<string, ImageBitmap>} */
+	let sprites = new Map();
+	/** @type {import('$lib/api').SkinPayload['pledit']} */
+	let pledit = $state({});
+	let inset = $state({ top: 20, bottom: 14, left: 11, right: 11 });
+	let tab = $state(/** @type {'about' | 'notices'} */ ('about'));
+	let version = $state('');
+	let notices = $state('');
+	let closePressed = false;
+
+	const close = () => closeWinampPanel('about').catch((e) => console.error('close failed', e));
+	const font = $derived(`${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`);
+	/** The notices as text and links, the links opened in the browser. */
+	const noticeParts = $derived(notices.split(/(https?:\/\/[^\s)]+)/));
+	const open = (/** @type {string} */ url) => openExternal(url).catch((e) => console.error('open link failed', e));
+
+	function draw() {
+		const ctx = canvas?.getContext('2d');
+		if (!ctx || sprites.size === 0) return;
+		canvas.width = WIDTH;
+		canvas.height = HEIGHT;
+		canvas.style.width = `${WIDTH}px`;
+		canvas.style.height = `${HEIGHT}px`;
+		ctx.fillStyle = pledit.normalBg ?? '#000000';
+		ctx.fillRect(0, 0, WIDTH, HEIGHT);
+		drawFrame(ctx, sprites, { x: 0, y: 0, w: WIDTH, h: HEIGHT }, closePressed, 'about', isLit('about'));
+	}
+
+	onMount(() => {
+		setActivePart('about');
+		getVersion().then((v) => (version = fullVersion(v)), () => (version = '?'));
+		fetch('/third-party-notices.txt')
+			.then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+			.then((text) => (notices = text))
+			.catch((e) => (notices = `Couldn’t read the notices (${e}).`));
+		window.addEventListener('focus', draw);
+		window.addEventListener('blur', draw);
+		// The DPI fix, then double size on top, following the Winamp window's.
+		const unlistenDouble = followDoubleSize(
+			pinOneToOnePixels().catch((e) => logUi('error', `about zoom pin failed: ${e}`)),
+			'about'
+		);
+		// Only the newest load lands: switch skins twice quickly and the second wins, whichever
+		// finishes decoding first.
+		let skinLoads = 0;
+		const reload = () => {
+			const mine = ++skinLoads;
+			return loadSkin()
+				.then(async (payload) => {
+					const decoded = await decodeAllSprites(payload.sprites);
+					if (mine !== skinLoads) return;
+					sprites = decoded;
+					pledit = payload.pledit;
+					inset = frameInset(artFrame(sprites));
+					draw();
+				})
+				.catch((e) => logUi('error', `about skin failed: ${e}`));
+		};
+		reload();
+		const unlistenSkin = listen('winamp-skin-changed', reload);
+
+		/** A titlebar press becomes a window drag once the mouse moves. */
+		let press = /** @type {{ x: number, y: number } | null} */ (null);
+		const onClose = (/** @type {MouseEvent} */ e) => {
+			const x = WIDTH + ART_CLOSE.dx;
+			return e.clientX >= x && e.clientX < x + ART_CLOSE.w && e.clientY >= ART_CLOSE.y && e.clientY < ART_CLOSE.y + ART_CLOSE.h;
+		};
+		const onDown = (/** @type {MouseEvent} */ e) => {
+			if (e.button !== 0) return;
+			if (onClose(e)) {
+				closePressed = true;
+				draw();
+			} else if (e.clientY < inset.top) {
+				press = { x: e.screenX, y: e.screenY };
+			}
+		};
+		const onMove = (/** @type {MouseEvent} */ e) => {
+			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
+				press = null;
+				getCurrentWindow().startDragging();
+			}
+		};
+		const onUp = (/** @type {MouseEvent} */ e) => {
+			press = null;
+			if (!closePressed) return;
+			closePressed = false;
+			// Released off the button: no close, as in Winamp.
+			if (onClose(e)) close();
+			else draw();
+		};
+		const onKey = (/** @type {KeyboardEvent} */ e) => {
+			if (e.key === 'Escape') close();
+		};
+		canvas.addEventListener('mousedown', onDown);
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+		window.addEventListener('keydown', onKey);
+		return () => {
+			unlistenDouble.then((f) => f());
+			unlistenSkin.then((f) => f());
+			window.removeEventListener('focus', draw);
+			window.removeEventListener('blur', draw);
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+			window.removeEventListener('keydown', onKey);
+		};
+	});
+</script>
+
+<div class="relative h-screen w-screen overflow-hidden bg-transparent">
+	<canvas bind:this={canvas} class="block"></canvas>
+	<div
+		class="absolute flex flex-col gap-2 text-[11px] leading-[14px]"
+		style:left="{inset.left + 6}px"
+		style:top="{inset.top + 6}px"
+		style:right="{inset.right + 6}px"
+		style:bottom="{inset.bottom + 6}px"
+		style:color={pledit.normal ?? '#00ff00'}
+		style:font-family={font}
+	>
+		<div class="flex gap-1">
+			{#each [['about', 'About'], ['notices', 'Third-party notices']] as [id, text] (id)}
+				<button
+					type="button"
+					class="border px-1.5 text-[11px] leading-[15px]"
+					style:background={tab === id ? (pledit.selectedBg ?? '#0000c6') : (pledit.normalBg ?? '#000000')}
+					style:color={pledit.current ?? '#ffffff'}
+					style:border-color={pledit.normal ?? '#00ff00'}
+					style:font-family={font}
+					onclick={() => (tab = /** @type {'about' | 'notices'} */ (id))}>{text}</button
+				>
+			{/each}
+		</div>
+		<div class="min-h-0 flex-1 select-text overflow-y-auto pr-1">
+			{#if tab === 'about'}
+				<p style:color={pledit.current ?? '#ffffff'}>{APP_NAME} {version}</p>
+				<p class="mt-2">Limusic with a classic Winamp 2.x skin mode.</p>
+				<p class="mt-2">
+					Built on Limusic (SimoHypers, GPL-3.0-or-later). Skin layout, marquee and analyzer after Webamp (Jordan
+					Eldredge and contributors, MIT); FFT from vis_classic (Mike Lynch, via WACUP, MIT); MilkDrop by Butterchurn
+					and butterchurn-presets (Jordan Berg, MIT). The built-in skin is Nullsoft&rsquo;s Winamp 2.91 base skin.
+				</p>
+				<p class="mt-2">Winamp is a trademark of its owner; this is an unofficial fan project.</p>
+				<p class="mt-2">
+					{#each [['YTMinamp on GitHub', 'https://github.com/ergosteur/YTMinamp-limusic'], ['Limusic', 'https://github.com/SimoHypers/limusic']] as [text, url], i (url)}
+						{#if i}&ensp;&middot;&ensp;{/if}<button
+							type="button"
+							class="cursor-pointer underline"
+							style:color={pledit.current ?? '#ffffff'}
+							title={url}
+							onclick={() => open(url)}>{text}</button
+						>
+					{/each}
+				</p>
+			{:else}
+				<pre class="whitespace-pre-wrap" style:font-family={font}>{#each noticeParts as part, i (i)}{#if i % 2}<button
+								type="button"
+								class="cursor-pointer underline"
+								style:color={pledit.current ?? '#ffffff'}
+								onclick={() => open(part)}>{part}</button
+							>{:else}{part}{/if}{/each}</pre>
+			{/if}
+		</div>
+	</div>
+</div>

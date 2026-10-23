@@ -551,11 +551,17 @@ export const setMiniCompact = (compact: boolean) => invoke<void>('set_mini_compa
 export const openWinamp = () => invoke<void>('open_winamp');
 /** Close the Winamp window and bring the app back. */
 export const closeWinamp = () => invoke<void>('close_winamp');
-/** The skin UI resizing its own window (no native resize handles — `resizable: false`). */
 /** Whether a `width`x`height` Winamp window fits its screen. */
 export const winampFits = (width: number, height: number) => invoke<boolean>('winamp_fits', { width, height });
+/** The skin UI resizing its own window (no native resize handles — `resizable: false`). */
 export const resizeWinamp = (width: number, height: number) =>
 	invoke<void>('resize_winamp', { width, height });
+/** Winamp's "Stop after current": pause at the end of this track (winamp.rs). */
+export const setStopAfterCurrent = (on: boolean) => invoke<void>('set_stop_after_current', { on });
+export const stopAfterCurrentSet = () => invoke<boolean>('stop_after_current_set');
+/** Media Library (Alt+L): Limusic's own window, up or not, and shown or hidden (winamp.rs). */
+export const limusicWindowShown = () => invoke<boolean>('limusic_window_shown');
+export const showLimusicWindow = (show: boolean) => invoke<void>('show_limusic_window', { show });
 /** The remembered skin, parsed into sprite sheets (PNG data URLs) + window shape/colors for the
  *  Winamp UI. Falls back to the skin built into the binary. */
 export const loadWszSkin = () => invoke<SkinPayload>('load_wsz_skin');
@@ -564,7 +570,8 @@ export const selectWszSkin = (path: string | null) => invoke<SkinPayload>('selec
 /** The skins folder's `.wsz` files, for the skin menu. */
 export const listWszSkins = () => invoke<SkinList>('list_wsz_skins');
 /** Copy a picked `.wsz` into the skins folder; resolves to its new path. */
-export const importWszSkin = (path: string) => invoke<string>('import_wsz_skin', { path });
+export const importWszSkin = (path: string, replace = false) =>
+	invoke<string>('import_wsz_skin', { path, replace });
 export const openSkinsDir = () => invoke<void>('open_skins_dir');
 /** One entry of the Winamp right-click menu, for the non-blocking GTK popup (winamp.rs). */
 export interface WinampMenuEntry {
@@ -582,7 +589,7 @@ export interface WinampMenuEntry {
 export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number) =>
 	invoke<void>('winamp_popup_menu', { items, x, y });
 /** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
-export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo';
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about';
 /** Float a panel in its own window, or bring that window back if it's up. */
 export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
 	invoke<void>('open_winamp_panel', { kind, width, height });

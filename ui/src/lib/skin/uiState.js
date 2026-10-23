@@ -8,6 +8,9 @@
 
 export const uiState = {
 	pressedButton: /** @type {string | null} */ (null),
+	/** "Stop after current" is set (mirrors winamp.rs), and whether it has just stopped playback. */
+	stopAfter: false,
+	stoppedAfterCurrent: false,
 	/** The clutterbar's A: every Winamp window kept above others (winamp.rs, remembered). */
 	alwaysOnTop: false,
 	/** The clutterbar's D: the Winamp window drawn at 2x (pixels.js `setScale`). */

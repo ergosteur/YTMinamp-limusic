@@ -10,8 +10,7 @@ import { friendlyNetError } from './neterr';
 import { canSelfUpdate, checkBetaUpdate, getSettings, openExternal, releaseNotes } from './api';
 import { isNewer, isPrerelease } from './version';
 import { getVersion } from '@tauri-apps/api/app';
-
-const RELEASES_URL = 'https://github.com/SimoHypers/limusic/releases/latest';
+import { lookForRelease, RELEASES_URL } from './skin/updates.js';
 
 /** How often the quiet check repeats while the app stays open. */
 export const QUIET_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -28,7 +27,10 @@ export const updateState = $state({
 // The resolved handle to download; kept out of reactive state (it's not serializable/renderable).
 let pending: Update | null = null;
 
-async function look(): Promise<boolean> {
+// ytminamp: its own releases, never Limusic's manifests or beta channel (skin/updates.js).
+const look = (): Promise<boolean> => lookForRelease(updateState);
+
+async function limusicLook(): Promise<boolean> {
 	let u: Update | null;
 	const beta = (await getSettings()).update_channel === 'beta';
 	const current = await getVersion();

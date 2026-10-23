@@ -935,8 +935,12 @@ pub async fn list_wsz_skins(app: tauri::AppHandle) -> Result<crate::winamp::Skin
 
 /// Copy a picked `.wsz` into the skins folder; returns its new path.
 #[tauri::command]
-pub async fn import_wsz_skin(app: tauri::AppHandle, path: String) -> Result<String, String> {
-    crate::winamp::import(&app, &path)
+pub async fn import_wsz_skin(
+    app: tauri::AppHandle,
+    path: String,
+    replace: bool,
+) -> Result<String, String> {
+    crate::winamp::import(&app, &path, replace)
 }
 
 /// Show the skins folder in the file manager.

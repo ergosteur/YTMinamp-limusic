@@ -22,7 +22,7 @@
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { attachInput } from '../skin/input.js';
 	import { setActivePart } from '../skin/focus.js';
-	import { pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
 	import {
 		LYRICS_ZOOM_EVENT,
 		SEARCH_INPUT_ID,
@@ -41,7 +41,7 @@
 	import { artFrame } from '../skin/render/albumArt.js';
 	import { lyricsNow, sungLine } from '../skin/lyrics.js';
 	import { attachKeys } from '../skin/keys.js';
-	import { loadPrefs, pref, savePref } from '../skin/prefs.js';
+	import { flushPrefs, loadPrefs, pref, savePref } from '../skin/prefs.js';
 	import { cropToSelected, removeSelected } from '../skin/playlistActions.js';
 	import { uiState } from '../skin/uiState.js';
 
@@ -64,14 +64,22 @@
 	const size = () => ({ w: window.innerWidth, h: window.innerHeight });
 	/** Ask the Winamp window to dock this panel back (`'stack'`, lyrics `'right'`) or hide it (null). */
 	const dockTo = (/** @type {'stack' | 'right' | null} */ dock) =>
-		emitTo('winamp', 'winamp-panel-dock', { kind, dock }).catch((e) => console.error('dock request failed', e));
+		// Saves first: docking reloads the EQ from disk, and this window is about to close.
+		flushPrefs()
+			.catch((e) => console.error('saving winamp prefs failed', e))
+			.then(() => emitTo('winamp', 'winamp-panel-dock', { kind, dock }))
+			.catch((e) => console.error('dock request failed', e));
 
 	const onSearchKey = (/** @type {KeyboardEvent} */ e) => searchKeydown(e, searchInput, size(), () => dockTo(null));
 
 	onMount(() => {
 		// This window holds just the one panel: it's the active one whenever the window has focus.
 		setActivePart(kind);
-		pinOneToOnePixels().catch((e) => logUi('error', `${kind} window zoom pin failed: ${e}`));
+		// The DPI fix, then double size on top, following the Winamp window's.
+		const unlistenDouble = followDoubleSize(
+			pinOneToOnePixels().catch((e) => logUi('error', `${kind} window zoom pin failed: ${e}`)),
+			kind
+		);
 		// This window's own copy of the panel state starts open, wherever the Winamp window had it.
 		({ playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics })[kind].open = true;
 		// The EQ's settings live in the remembered prefs, shared with the Winamp window.
@@ -89,15 +97,22 @@
 			return true;
 		});
 
-		const reload = () =>
-			loadSkin()
+		// Only the newest load lands: switch skins twice quickly and the second wins, whichever
+		// finishes decoding first.
+		let skinLoads = 0;
+		const reload = () => {
+			const mine = ++skinLoads;
+			return loadSkin()
 				.then(async (payload) => {
-					sprites = await decodeAllSprites(payload.sprites);
+					const decoded = await decodeAllSprites(payload.sprites);
+					if (mine !== skinLoads) return;
+					sprites = decoded;
 					pledit = payload.pledit;
 					// Lyrics' frame (gen.bmp or the EQ fallback) decides where its titlebar ends.
 					uiState.art.frame = artFrame(sprites);
 				})
 				.catch((e) => logUi('error', `${kind} window skin failed: ${e}`));
+		};
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 		if (kind === 'search') requestAnimationFrame(() => requestAnimationFrame(flashSearch));
@@ -161,16 +176,19 @@
 			const r = grip();
 			if (!r || e.button !== 0 || e.clientX < r.x || e.clientY < r.y) return;
 			e.stopImmediatePropagation();
-			resize = { x: e.screenX, y: e.screenY, ...size() };
+			// Page px from the window's corner (which stays put): the same unit at any zoom.
+			resize = { x: e.clientX, y: e.clientY, ...size() };
 		};
 		const onMove = (/** @type {MouseEvent} */ e) => {
 			const r = grip();
+			// Released outside the window (the drag outran it): no mouseup comes, so end it here.
+			if (resize && !(e.buttons & 1)) return onUp();
 			canvas.style.cursor = resize || (r && e.clientX >= r.x && e.clientY >= r.y) ? 'nwse-resize' : '';
 			if (!resize) return;
-			const next = fit({ w: resize.w + e.screenX - resize.x, h: resize.h + e.screenY - resize.y });
+			const next = fit({ w: resize.w + e.clientX - resize.x, h: resize.h + e.clientY - resize.y });
 			if (sent && next.w === sent.w && next.h === sent.h) return;
 			sent = next;
-			resizeWinampPanel(kind, next.w, next.h).catch(() => {});
+			resizeWinampPanel(kind, next.w * doubleFactor(), next.h * doubleFactor()).catch(() => {});
 			savePref(`floatSize-${kind}`, next);
 		};
 		const onUp = () => {
@@ -211,6 +229,7 @@
 		});
 
 		return () => {
+			unlistenDouble.then((f) => f());
 			stopLoop();
 			unlistenSkin.then((f) => f());
 			unlistenFocus.then((f) => f());

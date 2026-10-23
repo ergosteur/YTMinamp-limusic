@@ -38,12 +38,18 @@ Kept small so upstream merges stay easy. If a merge conflicts, these are the pla
 - `src-tauri/src/lib.rs` — `mod winamp`, command registration, the `only_ui` window allowlist, and
   the close-request handler (`mini::LABEL | winamp::LABEL`).
 - `src-tauri/src/tray.rs` — `show_main` also closes the Winamp window.
-- `crates/player/src/lib.rs` — `Player::audio_info` (kbps/kHz/channels for the display).
+- `crates/player/src/lib.rs` — `Player::audio_info` (kbps/kHz/channels for the display),
+  `set_extra_af` / `af_command` / `af_metadata` (the EQ and analyzer filters), `set_keep_open`
+  (Stop after current).
 - `src-tauri/src/lastfm.rs` — `unappimage` made `pub(crate)` so opening the skins folder can use it.
 - `src-tauri/capabilities/default.json` — `winamp` in the window list (without it the window
   can't listen to events and nothing updates).
 - `src-tauri/tauri.conf.json` — product name/identifier, and **updater endpoints emptied** so
-  this fork can never self-update to vanilla Limusic.
+  this fork can never self-update to vanilla Limusic; `tauri.macos.conf.json` repeats the title.
+- `ui/src/lib/updater.svelte.ts` — `look()` is ours (`skin/updates.js`: YTMinamp's own GitHub
+  releases, download link only); `SettingsDialog.svelte` hides the beta channel.
+- `ui/src/lib/components/Titlebar.svelte`, `SettingsDialog.svelte` — the name and full version from
+  `skin/brand.js`; the Winamp-mode button with the app icon.
 - `ui/src/routes/+layout.svelte` — the `isWinamp` branch.
 - `ui/src/lib/api.ts`, `ui/src/lib/player.svelte.ts` — command wrappers.
 
@@ -102,7 +108,7 @@ It sits in the skin's generic frame, titled MILKDROP; fullscreen drops the frame
 change automatically with a blend, every 20 seconds unless the right-click menu says otherwise
 (off, 10 s to 5 min). N / P next and previous, L the preset browser (MilkDrop's own key: a
 filterable list over the picture in the skin's playlist colours; click or Enter picks, Esc
-(wherever the focus is) or L closes), F or a double-click fullscreen, Esc leaves it. Drag to move, the frame's corner to resize
+(wherever the focus is) closes it; L types in its filter box), F or a double-click fullscreen, Esc leaves it. Drag to move, the frame's corner to resize
 (remembered). Two on-screen texts, each shown on change (for five seconds), always, or never from
 the right-click menu: the preset's name (bottom left) and the track's artist, title and time
 (top left, on every track change). **Album art overlay** draws the playing track's cover over the
@@ -187,8 +193,10 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 | A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸ |
 | The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸ |
 | The analyzer | Start/Stop plug-in (Ctrl+Shift+K, MilkDrop); Run the plug-in on start-up; the plug-in list (MilkDrop); Spectrum analyser / Off |
+| The Stop button | Stop (V), Stop w/ fadeout (Shift+V), Stop after current (Ctrl+V; Ctrl+click Stop does it too) |
+| File info | Bigger text, Smaller text, Normal size; Copy link, Open in browser |
 | The album art | View file info... (Alt+3); Show full-size artwork (the biggest YouTube serves, in the browser); Show album name (a strip under the picture, any script, remembered as `artCaption`, in every window); Placement ▸; Copy link, Open in YouTube Music |
-| Anywhere else | The main menu |
+| Anywhere else | The main menu: About; Play ▸; View file info... (the playing track); Media Library (Limusic's window, shown or hidden), the panels; Options ▸, Playback ▸, Visualisation ▸, Skins ▸, Window Settings ▸; Back to Limusic, Exit |
 
 Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
 title, then artist, album and length, a line each.
@@ -202,9 +210,27 @@ offered as playlists to add to. The Winamp
 logo at the bottom right opens About.
 
 **File info** (`FileInfoWindow.svelte`, window `winamp-fileinfo`): the cover, title, artist,
-album, length, play count, who added or queued it, and the video ID, with Copy link and Open in
-browser. The track reaches the window through localStorage (`showFileInfo` in `skinApi.js`), which
-every window shares, so an open File info window follows the next one shown.
+album, release (Album, EP or Single, and the year), track number ("3 of 12"), length, play count,
+who added or queued it, and the video ID, with Copy link and Open in browser. A song also gets a
+like heart (Limusic's `toggleRating`, no dislike here) and its library state with Add to / Remove
+from library (Limusic's `toggleSongLibrary`), when YouTube sent the token for it with the row or
+the song's album page row. It leaves that out for a song already in one of your playlists (its
+own apps show no "Save to library" then either), so without one File info shows nothing; its artist and
+album open their pages in Limusic's window. A song with a
+linked album gets those from the album's page (fetched once per album); a music video has no
+album, so it shows what its row carries. Its right-click menu (Bigger text, Smaller text, Normal
+size), Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel or a pinch zoom the text, the window growing with it
+(remembered as `fileInfoZoom`). Pinches arrive as Safari's gesture events on macOS and as
+Ctrl+wheel on Windows (`pixels.js` `onPinch`); lyrics take them too. The track reaches the window
+through localStorage (`showFileInfo` in `skinApi.js`), which every window shares, so an open File
+info window follows the next one shown.
+
+**Stop after current** (Playback ▸, the Stop button's right-click menu, Ctrl+click on Stop, or
+Ctrl+V) pauses at the end of the playing track instead of going on: mpv's `keep-open=always`
+(`winamp::stop_after_current`), so nothing of the next track is heard; crossfade is suspended
+while it's set. It's spent once it fires ("Stopped after current" in the title), and Play then goes
+on to the next track. **Stop w/ fadeout** (Shift+V) brings the volume down over a second and a
+half, stops, and puts the volume back.
 
 ## Clutterbar, double size, always on top
 
@@ -218,7 +244,10 @@ menu, **A** keeps every Winamp window above others (`winamp::set_always_on_top`,
 **I** shows album art, **D** is double size, **V** turns the analyzer on or off. Letters light
 while their thing is on. Double size zooms the Winamp window's webview to 2x on top of the DPI fix
 (`pixels.js`), so every coordinate inside stays the same and the canvas is drawn with
-`image-rendering: pixelated`; menus open at the click by multiplying it by the zoom.
+`image-rendering: pixelated`; menus open at the click by multiplying it by the zoom. The floating
+windows follow it (all but MilkDrop's, which has no pixel art to double): the Winamp window
+publishes it in localStorage and an event (`announceDoubleSize`), and each window zooms itself and
+asks for twice its size (`followDoubleSize`, `doubleFactor`).
 
 ## Keyboard shortcuts
 
@@ -229,11 +258,13 @@ Space keep their meaning.
 | Keys | |
 |---|---|
 | Z X C V B | Previous, Play, Pause, Stop, Next |
-| ← → | Back / forward 5 seconds |
+| Shift+V, Ctrl+V | Stop with fadeout, Stop after current |
+| ← → | Back / forward 5 seconds (held: keeps going) |
 | ↑ ↓ | Volume |
 | S, R | Shuffle, repeat |
-| J, Ctrl+L | Search, Open YouTube URL |
-| Alt+E, Alt+G, Alt+A, Alt+Y | Playlist editor, equalizer, album art, lyrics |
+| J or Ctrl+J, Ctrl+L | Search (opens the panel and puts the cursor in its box), Open YouTube URL |
+| Alt+E, Alt+G, Alt+A, Alt+Y, Alt+K | Playlist editor, equalizer, album art, lyrics, search panel (show/hide) |
+| Alt+L | Media Library (Limusic window): shows Limusic's own window where it was, or hides it again (Winamp mode stays open) |
 | Ctrl+A, Ctrl+2, Ctrl+T | Always on top, double size (Winamp's Ctrl+D is Limusic's previous track), time remaining |
 | Delete, Ctrl+Delete, Enter | Remove the selected playlist tracks, crop to them (remove every other upcoming one), play the selected one |
 | Alt+3 | File info: the selected row when the playlist or search panel is the active window, otherwise what's playing |
@@ -301,9 +332,12 @@ window saves the keys it changes and Rust merges per key.
 The clutterbar's **I**, Alt+A, or right-click → **Album Art** shows the playing track's cover: hidden, left or right of the
 player (at its height), below the stack (at its width), or in a floating window (the default). Winamp
 5's Album Art window is drawn with the generic window frame (`gen.bmp`); most older skins don't
-have one, so they get a frame cut from the equalizer window (`eqmain.bmp`: its titlebar ends, a
-4 px border from its edges, an "ALBUM ART" label over its title). Either way it's titled ALBUM
-ART (just ART when it's too narrow). The cover is always square:
+have one, so they get the playlist editor's frame instead (`pledit.bmp`: its top bar with the
+window's own title in place of the playlist's, its side tiles without the scrollbar groove, and
+only the plain bottom edge, none of its buttons). Either way it's titled ALBUM ART (just ART when
+it's too narrow). The other generic windows (lyrics, MilkDrop, Open URL, File info, EQ preset)
+use the same frame. A skin that's missing other sheets (`cbuttons.bmp`, `numbers.bmp`, ...) gets
+the base skin's, as in Winamp. The cover is always square:
 video thumbnails (16:9) are cropped to a centred square. Double-clicking docked art moves it on
 (right → below → left); dragging it moves the window. Docked left, the main window and the stack
 shift right inside the window: on Wayland an app can't move its own window, so the player itself
@@ -322,7 +356,7 @@ Generic frames (album art, lyrics, MilkDrop, Open URL) carry their title in `gen
 alphabet, A-Z in a lit row (y 88) and a dim one (y 96), each letter its own width, separated by
 1 px columns of the colour at x 0: measured per skin, as Webamp does. The title sits on the
 titlebar's centre fill between its end caps. A `gen.bmp` without those letters, or a skin with no
-`gen.bmp` (the frame cut from `eqmain.bmp` then), falls back to `text.bmp`'s letters.
+`gen.bmp` (the playlist editor's frame then), falls back to `text.bmp`'s letters.
 
 ## Floating panels
 
@@ -413,8 +447,12 @@ Vite server.
 ```bash
 scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminamp
 ./dist/ytminamp
-scripts/build-fedora.sh rpm  # the same, plus dist/ytminamp-<version>-1.x86_64.rpm
+scripts/build-fedora.sh rpm  # the same, plus dist/ytminamp-<version>-<N>.x86_64.rpm
 ```
+
+N is the build number (see [Releases](#releases)). Cargo's build directory is a podman volume
+per checkout (`ytminamp-target-<directory name>`): every checkout mounts at the same path in the
+container, and a shared one would hand one checkout another's newer build of a crate.
 
 It links against the distro's own webkit2gtk4.1 and mpv-libs (both present on a
 stock Fedora 44 desktop). App data lives under the `com.ytminamp.desktop` identifier, separate
@@ -423,8 +461,8 @@ from an installed Limusic. The default skin, Winamp 2.91's own, is compiled in
 
 ### Driving the GUI from scripts
 
-GNOME on Wayland silently drops synthetic (XTest) input, so automated testing runs the app on a
-private Xvfb display. The `gui-test` dev shell has the tools:
+Wayland compositors drop synthetic (XTest) input, so automated testing runs the app on a private
+Xvfb display. With Nix, the flake's `gui-test` dev shell has the tools:
 
 ```bash
 nix develop .#gui-test --command Xvfb :99 -screen 0 1280x800x24 &
@@ -438,11 +476,10 @@ error and the app aborts.
 
 ## Not done yet
 
-- Shade mode; oscilloscope; EQ AUTO (per-track presets).
-- The Media Library window.
-- Multiple selection in the playlist.
+- Shade mode; oscilloscope; EQ AUTO (per-track presets); Jump to time.
+- A Media Library window of its own: Limusic's window stands in (Media Library, Alt+L).
 - Snapping floating windows together.
-- Search covers songs only (no albums, artists, playlists or typeahead).
+- Search typeahead.
 - Fractional desktop scaling (e.g. 125%) blurs the skin evenly: GTK3 renders the window at 1x and
   the compositor scales it. Pixel art can't be both sharp and evenly sized at 1.25x.
 
@@ -452,7 +489,11 @@ Development happens in a private repository with the full history; the public fo
 [ergosteur/YTMinamp-limusic](https://github.com/ergosteur/YTMinamp-limusic), gets a squashed
 snapshot per sync on its `ytminamp` branch (its `master` stays upstream Limusic).
 `scripts/publish-github.sh` exports the committed tree (`git archive`, so nothing uncommitted
-or ignored can leak), mirrors it into a clone of the fork and commits; it never pushes.
+or ignored can leak), mirrors it into a clone of the fork and commits; it never pushes. Private
+files (the backlog, notes for coding agents) are left out of both the tree and the commit message
+(only commits that change something published contribute theirs), and it refuses to publish if
+either names a private host or address; `PUBLISH_MESSAGE=<file>` supplies a message instead.
+Edit in the private repository: the clone is overwritten on every sync.
 
 ### Releases
 
@@ -544,10 +585,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-vis_classic (WACUP) — https://github.com/WACUP/vis_classic — is also released under the MIT
-licence; see its repository for the copyright line.
+vis_classic (WACUP) — https://github.com/WACUP/vis_classic — MIT, "Copyright (c) 1998-2018 Mike
+Lynch (original plug-in author)" and "Copyright (c) 2018 WACUP - WinAmp Community Update Project",
+with the same terms as above.
 
 Butterchurn and butterchurn-presets — https://github.com/jberg/butterchurn — MIT, "Copyright (c)
-2013-2018 Jordan Berg", with the same terms as above (their LICENSE files ship in the packages).
+2013-2018 Jordan Berg", with the same terms as above.
+
+The app carries these notices itself (`ui/static/third-party-notices.txt`, on the About window's
+*Third-party notices* tab), since the bundled code doesn't keep the packages' LICENSE files.
 
 </details>
