@@ -6,7 +6,6 @@
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { closeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { checkForUpdatesInteractive, openDownloadPage, updateState } from '$lib/updater.svelte';
@@ -14,6 +13,7 @@
 	import { artFrame, drawFrame, frameInset, onCloseButton } from '../skin/render/albumArt.js';
 	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
 	import { UPDATE_SIZE, loadSkin } from '../skin/skinApi.js';
+	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { fullVersion } from '../skin/brand.js';
 
@@ -82,46 +82,26 @@
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 
-		/** A titlebar press becomes a window drag once the mouse moves. */
-		let press = /** @type {{ x: number, y: number } | null} */ (null);
-		const onDown = (/** @type {MouseEvent} */ e) => {
-			if (e.button !== 0) return;
-			if (onCloseButton(e, WIDTH)) {
-				closePressed = true;
+		const stopFrameMouse = frameMouse(canvas, {
+			onClose: (e) => onCloseButton(e, WIDTH),
+			inset: () => inset,
+			pressed: (down) => {
+				closePressed = down;
 				draw();
-			} else if (e.clientY < inset.top) {
-				press = { x: e.screenX, y: e.screenY };
-			}
-		};
-		const onMove = (/** @type {MouseEvent} */ e) => {
-			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
-				press = null;
-				getCurrentWindow().startDragging();
-			}
-		};
-		const onUp = (/** @type {MouseEvent} */ e) => {
-			press = null;
-			if (!closePressed) return;
-			closePressed = false;
-			// Released off the button: no close, as in Winamp.
-			if (onCloseButton(e, WIDTH)) close();
-			else draw();
-		};
+			},
+			close
+		});
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
 			if (e.key === 'Escape') close();
 			else if (e.key === 'Enter' && newer) download();
 		};
-		canvas.addEventListener('mousedown', onDown);
-		window.addEventListener('mousemove', onMove);
-		window.addEventListener('mouseup', onUp);
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
-			window.removeEventListener('mousemove', onMove);
-			window.removeEventListener('mouseup', onUp);
+			stopFrameMouse();
 			window.removeEventListener('keydown', onKey);
 		};
 	});

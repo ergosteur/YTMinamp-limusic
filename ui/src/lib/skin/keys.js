@@ -6,7 +6,8 @@
 import { emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { keyOf, typing } from '$lib/shortcuts';
-import { toggleLimusic } from './navigate.js';
+import { openLimusicSettings, toggleLimusic } from './navigate.js';
+import { toggleLibrary } from './library.js';
 import {
 	cycleRepeat,
 	nextTrack,
@@ -36,7 +37,7 @@ import { uiState } from './uiState.js';
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
  *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'
- *   | 'stopAfter' | 'stopFade' | 'library' | 'searchPanel'} KeyAction */
+ *   | 'stopAfter' | 'stopFade' | 'library' | 'limusic' | 'searchPanel' | 'prefs'} KeyAction */
 
 /**
  * The key, as Limusic's `keyOf` reads it, except where a modifier or the layout turns one of our
@@ -44,7 +45,7 @@ import { uiState } from './uiState.js';
  * AZERTY's digit row (Ctrl+2 is é). Those are read by the physical key instead.
  * @param {KeyboardEvent} e
  */
-function keyName(e) {
+export function keyName(e) {
 	const k = keyOf(e);
 	if (k === 'Dead' || (k.length === 1 && k.charCodeAt(0) > 127)) {
 		if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
@@ -63,7 +64,7 @@ function actionFor(e) {
 	const ctrl = e.ctrlKey || e.metaKey;
 	const key = keyName(e);
 	if (e.altKey && !ctrl && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', k: 'searchPanel', 3: 'fileInfo', l: 'library' })[key] ?? null;
+		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', k: 'searchPanel', 3: 'fileInfo', l: 'library', m: 'limusic' })[key] ?? null;
 	}
 	// Lyrics text size, the keys Limusic zooms its own window with. Shift allowed: `+` is
 	// Shift+= on many layouts. The numpad's +, - and 0 give the same keys.
@@ -77,6 +78,7 @@ function actionFor(e) {
 		return (
 			/** @type {Record<string, KeyAction>} */ ({
 				l: 'url',
+				p: 'prefs',
 				a: 'onTop',
 				2: 'double',
 				t: 'time',
@@ -159,7 +161,11 @@ export function runKey(action) {
 		case 'searchPanel':
 			return togglePanel('search');
 		case 'library':
-			return void toggleLimusic().catch(log('media library'));
+			return void toggleLibrary().catch(log('media library'));
+		case 'limusic':
+			return void toggleLimusic().catch(log('limusic window'));
+		case 'prefs':
+			return void openLimusicSettings().catch(log('preferences'));
 		case 'stopFade':
 			return void stopWithFadeout().catch(log('stop with fadeout'));
 	}

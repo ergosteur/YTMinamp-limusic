@@ -50,9 +50,9 @@ import {
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
-import { ART_CLOSE, artTitleHeight } from './render/albumArt.js';
+import { ART_CLOSE, artTitleHeight, frameInset } from './render/albumArt.js';
+import { onFrame } from './frameWindow.js';
 import { EQ_BANDS, eqHit, eqValueAt } from './render/equalizer.js';
-import { LYRICS_WHEEL_ROWS } from './render/lyrics.js';
 import { LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
 import { savePref } from './prefs.js';
 import { setActivePart } from './focus.js';
@@ -513,9 +513,9 @@ export function attachInput(canvas, host) {
 			const view = panelState(list);
 			if (!view.marked.has(i)) selectOnly(view, i);
 			host.showMenu(list === 'search' ? { kind: 'result', index: i } : { kind: 'queueRow', index: i }, at);
-		} else if (hit?.kind === 'lyrics') {
-			host.showMenu({ kind: 'lyrics' }, at);
-		} else if (hit?.kind === 'art') {
+		} else if (hit?.kind === 'art' && !onFrame(hit.px, hit.py, hit.w, hit.h, frameInset(uiState.art.frame))) {
+			// The picture's menu; its frame's is the main menu, like every frame's. (The lyrics'
+			// own menu is the lyrics view's, laid over all but their frame: WinampLyricsView.)
 			host.showMenu({ kind: 'art' }, at);
 		} else if (hit?.kind === 'main' && hits(MARQUEE_POS, MARQUEE_POS, hit.px, hit.py)) {
 			host.showMenu({ kind: 'title' }, at);
@@ -677,8 +677,8 @@ export function attachInput(canvas, host) {
 			const hit = host.hitTest(point.x, point.y);
 			if (hit?.kind === 'lyrics') {
 				event.preventDefault();
-				if (event.ctrlKey || event.metaKey) return zoomLyrics(event.deltaY < 0 ? 1 : -1);
-				uiState.lyrics.nudge += event.deltaY > 0 ? LYRICS_WHEEL_ROWS : -LYRICS_WHEEL_ROWS;
+				// Its frame (the text is HTML on top, WinampLyricsView.svelte, which scrolls itself).
+				if (event.ctrlKey || event.metaKey) zoomLyrics(event.deltaY < 0 ? 1 : -1);
 				return;
 			}
 			if (hit?.kind === 'main' && hits(VOLUME_POS, VOLUME_POS, hit.px, hit.py)) {

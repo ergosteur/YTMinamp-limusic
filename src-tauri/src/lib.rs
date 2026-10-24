@@ -537,16 +537,18 @@ pub fn run() {
         // fixed-size and the login/cipher/PoToken webviews are windows too. Size, position and
         // maximized only — VISIBLE would restore a window hidden to the tray as invisible, and
         // DECORATIONS would fight the custom titlebar.
-        .plugin(
-            tauri_plugin_window_state::Builder::new()
+        .plugin({
+            let builder = tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
-                .with_filter(|label| label == "main")
-                .build(),
-        )
+                // ytminamp: the Winamp windows too, tracked here and put back by winamp.rs
+                // (`restore_place`), which knows what of theirs to restore.
+                .with_filter(|label| label == "main" || winamp::is_winamp_label(label));
+            winamp::window_labels().fold(builder, |b, label| b.skip_initial_state(&label)).build()
+        })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1057,6 +1059,7 @@ pub fn run() {
             commands::open_skins_dir,
             commands::winamp_audio_info,
             commands::winamp_popup_menu,
+            commands::winamp_queue_intro,
             commands::winamp_prefs,
             commands::set_winamp_prefs,
             commands::set_winamp_always_on_top,

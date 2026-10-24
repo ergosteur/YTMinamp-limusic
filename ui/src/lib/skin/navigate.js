@@ -1,21 +1,24 @@
-// Winamp mode opening a page of the full Limusic window (the playlist's + → Browse library, File
-// info's artist and album): the Winamp window sends a path, the main window goes there and comes
-// to the front. Media Library (Alt+L) shows or hides that window as it is (`toggleLimusic`). Winamp mode stays
+// Winamp mode opening Limusic's own window: its settings (Preferences, Ctrl+P), or a page of it:
+// the Winamp window sends a path, the main window goes there and comes to the front. The main
+// menu's "Limusic window" shows or hides it as it is (`toggleLimusic`). Winamp mode stays
 // open alongside. Shown directly rather than through `show_main`, which "Always start in Winamp
 // mode" would turn into opening Winamp mode again.
 import { goto } from '$app/navigation';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { limusicWindowShown, showLimusicWindow } from '$lib/api';
+import { ui } from '$lib/player.svelte';
 
 const EVENT = 'ytminamp-navigate';
+/** Sent instead of a path: open Limusic's settings (Winamp's Preferences, Ctrl+P). */
+const SETTINGS = 'settings';
 
-/** In a Winamp window: show `path` (e.g. '/library') in the main window. @param {string} path */
-export function openInLimusic(path) {
-	return emitTo('main', EVENT, path);
+/** Winamp's Preferences (Ctrl+P): Limusic's settings, in its window, for now. */
+export function openLimusicSettings() {
+	return emitTo('main', EVENT, SETTINGS);
 }
 
-/** Winamp's Media Library (Alt+L): Limusic's own window, shown where it was, or hidden again. */
+/** The main menu's "Limusic window": shown where it was, or hidden again. */
 export async function toggleLimusic() {
 	await showLimusicWindow(!(await limusicWindowShown()));
 }
@@ -32,6 +35,7 @@ export function onYtminampNavigate() {
 		await w.setFocus();
 		// Animation frames don't run while the window is hidden: two of them, it's painting.
 		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-		await goto(/** @type {string} */ (e.payload));
+		if (e.payload === SETTINGS) ui.settingsOpen = true;
+		else await goto(/** @type {string} */ (e.payload));
 	});
 }

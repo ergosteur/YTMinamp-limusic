@@ -9,7 +9,8 @@
 	import { resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
-	import { artFrame, artSize, drawAlbumArt, onCloseButton } from '../skin/render/albumArt.js';
+	import { artFrame, artSize, drawAlbumArt, frameInset, onCloseButton } from '../skin/render/albumArt.js';
+	import { frameMenu, onFrame } from '../skin/frameWindow.js';
 	import { setActivePart } from '../skin/focus.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { coverFor } from '../skin/art.js';
@@ -132,6 +133,8 @@
 		};
 		canvas.addEventListener('mousedown', onDown);
 		canvas.addEventListener('contextmenu', (e) => {
+			// The frame's is the player's main menu; the picture's is the art's.
+			if (onFrame(e.clientX, e.clientY, window.innerWidth, window.innerHeight, frameInset(artFrame(sprites)))) return frameMenu(e);
 			e.preventDefault();
 			showArtMenu({ x: e.clientX, y: e.clientY }).catch((err) => console.error('menu failed', err));
 		});

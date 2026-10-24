@@ -23,6 +23,11 @@ back through `tray::show_main`, the same path the mini player uses.
 | Keyboard shortcuts | `ui/src/lib/skin/keys.js` |
 | Remembered UI state | `ui/src/lib/skin/prefs.js` |
 | Docked panel layout (search, album art, playlist) and hit-testing | `ui/src/lib/skin/layout.js` |
+| Media Library window (label `winamp-library`), its colours | `ui/src/lib/components/MediaLibraryWindow.svelte`, `ui/src/lib/skin/library.js`, `libraryTheme.js` |
+| `genex.bmp`'s palette | `crates/skin/src/genex.rs` |
+| Readable text colours from a skin's | `ui/src/lib/skin/contrast.js` |
+| Generic-frame windows' titlebar drag, ✕, edge resizing, frame right-click | `ui/src/lib/skin/frameWindow.js` |
+| Lyrics panel (Limusic's lyrics view in the frame) | `ui/src/lib/components/WinampLyricsView.svelte` |
 | Analyzer audio capture + FFT | `src-tauri/src/viz.rs` |
 | Titlebar button | `ui/src/lib/components/Titlebar.svelte` |
 | Test skins | `fixtures/skins/` |
@@ -35,22 +40,27 @@ facts, not copied code.
 
 Kept small so upstream merges stay easy. If a merge conflicts, these are the places:
 
-- `src-tauri/src/lib.rs` — `mod winamp`, command registration, the `only_ui` window allowlist, and
-  the close-request handler (`mini::LABEL | winamp::LABEL`).
+- `src-tauri/src/lib.rs` — `mod winamp`, command registration, the `only_ui` window allowlist, the
+  close-request handler (`mini::LABEL | winamp::LABEL`), and the window-state plugin's filter,
+  which tracks the Winamp windows too (restored by `winamp::restore_place`, not by the plugin).
 - `src-tauri/src/tray.rs` — `show_main` also closes the Winamp window.
 - `crates/player/src/lib.rs` — `Player::audio_info` (kbps/kHz/channels for the display),
   `set_extra_af` / `af_command` / `af_metadata` (the EQ and analyzer filters), `set_keep_open`
   (Stop after current).
 - `src-tauri/src/lastfm.rs` — `unappimage` made `pub(crate)` so opening the skins folder can use it.
-- `src-tauri/capabilities/default.json` — `winamp` in the window list (without it the window
-  can't listen to events and nothing updates).
+- `src-tauri/capabilities/default.json` — every Winamp window's label in the window list
+  (`winamp`, `winamp-<panel>`; without it a window can't listen to events, drag or resize, and
+  nothing updates).
 - `src-tauri/tauri.conf.json` — product name/identifier, and **updater endpoints emptied** so
   this fork can never self-update to vanilla Limusic; `tauri.macos.conf.json` repeats the title.
 - `ui/src/lib/updater.svelte.ts` — `look()` is ours (`skin/updates.js`: YTMinamp's own GitHub
   releases, download link only); `SettingsDialog.svelte` hides the beta channel.
 - `ui/src/lib/components/Titlebar.svelte`, `SettingsDialog.svelte` — the name and full version from
   `skin/brand.js`; the Winamp-mode button with the app icon.
-- `ui/src/routes/+layout.svelte` — the `isWinamp` branch.
+- `ui/src/routes/+layout.svelte` — the `isWinamp…` branches; the Media Library's renders Limusic's
+  `Sidebar` and pages inside `MediaLibraryWindow.svelte`, without `initTheme()`.
+- `src-tauri/src/commands.rs` — our commands, including `winamp_queue_intro`, which only calls
+  `AppState`'s public `queue_snapshot`, `add_to_queue` and `restore_queue`.
 - `ui/src/lib/api.ts`, `ui/src/lib/player.svelte.ts` — command wrappers.
 
 ## Spectrum analyzer
@@ -139,7 +149,7 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 
 | Button | Does |
 |---|---|
-| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Browse library…** (Limusic's Library page in the full window, Winamp mode staying open: `navigate.js`), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
+| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Browse library…** (the Media Library at its Library page), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
 | REM | Remove the selected track, or clear the queue |
 | SEL | Select all, none, or invert the selection, as in Winamp (Ctrl/Shift+click selects several) |
 | MISC | Sort what plays next by title or artist, or reverse it |
@@ -207,14 +217,15 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 | The Stop button | Stop (V), Stop w/ fadeout (Shift+V), Stop after current (Ctrl+V; Ctrl+click Stop does it too) |
 | File info | Bigger text, Smaller text, Normal size; Copy link, Open in browser |
 | The album art | View file info... (Alt+3); Show full-size artwork (the biggest YouTube serves, in the browser); Show album name (a strip under the picture, any script, remembered as `artCaption`, in every window); Placement ▸; Copy link, Open in YouTube Music |
-| Anywhere else | The main menu: About; Play ▸; View file info... (the playing track); Media Library (Limusic's window, shown or hidden), the panels; Options ▸, Playback ▸, Visualisation ▸, Skins ▸, Window Settings ▸; Back to Limusic, Exit |
+| The lyrics | Romanization, Translations (Limusic's own switches); Bigger / Smaller / Normal size |
+| Any window's frame | The main menu, from every Winamp window (a floating one asks the Winamp window, which shows it over the window clicked: `requestMainMenu`); inside, the window's own menu |
+| Anywhere else | The main menu: About; Play ▸; View file info... (the playing track); Media Library (Alt+L), Limusic window (Alt+M), the panels; Options ▸ (Preferences... first, Ctrl+P: Limusic's settings, in its window), Playback ▸, Visualisation ▸, Skins ▸, Window Settings ▸; Back to Limusic, Exit |
 
 Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
 title, then artist, album and length, a line each.
 
 Winamp's own entries come first, in its order; what Limusic adds follows in a group of its own.
-Go to artist / album open Limusic's window at that page (the media library, as far as Winamp mode
-goes). Limusic's Share lives in its own window, so here it's Copy link and Open in YouTube Music.
+Go to artist / album open the Media Library at that page. Limusic's Share lives in its own window, so here it's Copy link and Open in YouTube Music.
 
 A right-click inside a selection acts on all of it; outside, it selects that row first. Rate
 items ▸ (Rating ▸ on the title) holds Like / Dislike / No rating, Add to (or Remove from) library,
@@ -231,11 +242,11 @@ like heart (Limusic's `toggleRating`, no dislike here) and its library state wit
 from library (Limusic's `toggleSongLibrary`), when YouTube sent the token for it with the row or
 the song's album page row. It leaves that out for a song already in one of your playlists (its
 own apps show no "Save to library" then either), so without one File info shows nothing; its artist and
-album open their pages in Limusic's window. A song with a
+album open their pages in the Media Library. A song with a
 linked album gets those from the album's page (fetched once per album); a music video has no
 album, so it shows what its row carries. Its right-click menu (Bigger text, Smaller text, Normal
 size), Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel or a pinch zoom the text, the window growing with it
-(remembered as `fileInfoZoom`). Pinches arrive as Safari's gesture events on macOS and as
+(remembered as `fileInfoZoom`); its sides and bottom resize it too, as About's do. Pinches arrive as Safari's gesture events on macOS and as
 Ctrl+wheel on Windows (`pixels.js` `onPinch`); lyrics take them too. The track reaches the window
 through localStorage (`showFileInfo` in `skinApi.js`), which every window shares, so an open File
 info window follows the next one shown.
@@ -249,10 +260,11 @@ half, stops, and puts the volume back.
 
 ## Clutterbar, double size, always on top
 
-The main menu's **Always start in Winamp mode** (winamp.json's `startInWinamp`) opens the app in
-Winamp mode instead of the full window: Rust's `show_main`, which the page calls once to reveal
-the hidden main window at launch, opens the Winamp window instead. "Start minimized to tray"
-still wins.
+The main menu's **Always start in Winamp mode** (winamp.json's `startInWinamp`, on unless
+unticked) opens the app in Winamp mode instead of the full window: Rust's `show_main`, which the
+page calls once to reveal the hidden main window at launch, opens the Winamp window instead.
+"Start minimized to tray" still wins. Limusic's window is a key away (Alt+M, the main menu's
+**Limusic window**), and unticking this starts there again.
 
 The O A I D V strip left of the time display (sprites from `titlebar.bmp`): **O** opens the main
 menu, **A** keeps every Winamp window above others (`winamp::set_always_on_top`, new windows too),
@@ -279,7 +291,9 @@ Space keep their meaning.
 | S, R | Shuffle, repeat |
 | J or Ctrl+J, Ctrl+L | Search (opens the panel and puts the cursor in its box), Open YouTube URL |
 | Alt+E, Alt+G, Alt+A, Alt+Y, Alt+K | Playlist editor, equalizer, album art, lyrics, search panel (show/hide) |
-| Alt+L | Media Library (Limusic window): shows Limusic's own window where it was, or hides it again (Winamp mode stays open) |
+| Alt+L | Media Library: opens it, or closes it (in the library window too) |
+| Alt+M | Limusic's own window, shown where it was or hidden again (Winamp mode stays open) |
+| Ctrl+P | Preferences: Limusic's settings, in its window |
 | Ctrl+A, Ctrl+2, Ctrl+T | Always on top, double size (Winamp's Ctrl+D is Limusic's previous track), time remaining |
 | Delete, Ctrl+Delete, Enter | Remove the selected playlist tracks, crop to them (remove every other upcoming one), play the selected one |
 | Alt+3 | File info: the selected row when the playlist or search panel is the active window, otherwise what's playing |
@@ -314,33 +328,33 @@ again twice a second to put it right.
 
 ## Lyrics
 
-`render/lyrics.js` + `lyrics.js`: the playing track's lyrics (Limusic's `getLyrics`, the same
-request its own lyrics view makes) in the generic frame titled LYRICS, in the playlist font and
-colours. Timed lyrics light the sung line and keep it centred; the wheel scrolls by hand until the
-next track. Docked, lyrics sit to the right of the whole stack, as tall as the classic main + EQ +
-playlist (464 px) or the stack if taller, 275 px wide until dragged wider or narrower from their
-right edge (150–1200 px); album art can't take the right side then. Or floating, resizable.
-Ctrl+wheel over them (or the keys above) sizes the text, 75–300%, in every window at once
-(`zoomLyrics` in `skinApi.js`, broadcast as `winamp-lyrics-zoom`). The width and text size are
-remembered. Each line's romanization and translation (Limusic's, from `romanize.rs` and the
-lyrics providers) show under it, smaller, when switched on from the panel's right-click menu.
-Those are Limusic's own two switches (the same localStorage keys as `LyricsView.svelte`): on in
-one place is on in both. Translations start on and romanization off, as in Limusic.
-
-When the lyrics found are the wrong ones, the panel's footer has Limusic's own source picker
-(`LyricsSourcePicker.svelte` in `WinampLyricsFooter.svelte`, laid over a strip
-`render/lyrics.js` keeps at the bottom): "Lyrics from ..." opens every provider's answer side by
-side, to pin one, nudge the timing, or search with a corrected title. In a small floating lyrics
-window its popover can be cut off by the window's edge, so the right-click menu has the same in
-native form: **Lyrics source ▸** (Automatic, or one provider: `chooseLyricsSource`) and
-**Timing ▸** (a quarter second earlier or later, or reset: `setLyricsOffset`). Both are kept per
-song by Limusic, so they apply in its own lyrics view too.
+`WinampLyricsView.svelte`: Limusic's own lyrics view (`LyricsView.svelte`, unchanged) inside the
+generic frame titled LYRICS that `render/lyrics.js` draws, its theme tokens set from the playlist
+colours for that view alone: the sung line in the current-track colour, the rest in the normal
+one, on the playlist background, in the skin's font (each nudged until it reads, `contrast.js`).
+So it's Limusic's: the word-by-word sweep, a click on a line seeks there, its scrollbar, and its
+bar with the source picker (pin a provider, nudge the timing, search with a corrected title),
+romanization, translation and size. Docked, lyrics sit to the right of the whole stack, as tall
+as the classic main + EQ + playlist (464 px) or the stack if taller, 275 px wide until dragged
+wider or narrower from their right edge (150–1200 px); album art can't take the right side then.
+Or floating, resizable. Ctrl+wheel over them (or the keys above) sizes them, 75–300%, in every
+window at once (`zoomLyrics` in `skinApi.js`, broadcast as `winamp-lyrics-zoom`), as a CSS zoom
+of the whole view. The width and size are remembered. The right-click menu's Romanization and
+Translations are Limusic's own switches (the same localStorage keys as its view), so on in one
+place is on in both. Popovers from the view (the source picker) open in Limusic's theme, not the
+skin's.
 
 ## Remembered state
 
 `winamp.json`'s `ui` object (`prefs.js`, `winamp::merge_ui_prefs`): where each panel is, the EQ,
-double size, always on top, the time display, the analyzer, each floating window's size. Each
-window saves the keys it changes and Rust merges per key.
+double size, always on top, the time display, the analyzer, each floating window's size, whether
+the Media Library is open (`libraryOpen`). Each window saves the keys it changes and Rust merges
+per key.
+
+Window positions, and the Media Library's size, are Limusic's window-state plugin's
+(`.window-state.json`), which now tracks the Winamp windows as well; `winamp::restore_place` puts
+each back when it opens. Only where an app can place its windows: on native Wayland the
+compositor decides, so positions aren't restored there (sizes are).
 
 ## Album art
 
@@ -350,8 +364,9 @@ player (at its height), below the stack (at its width), or in a floating window 
 have one, so they get the playlist editor's frame instead (`pledit.bmp`: its top bar with the
 window's own title in place of the playlist's, its side tiles without the scrollbar groove, and
 only the plain bottom edge, none of its buttons). Either way it's titled ALBUM ART (just ART when
-it's too narrow). The other generic windows (lyrics, MilkDrop, Open URL, File info, EQ preset)
-use the same frame. A skin that's missing other sheets (`cbuttons.bmp`, `numbers.bmp`, ...) gets
+it's too narrow). The other generic windows (lyrics, MilkDrop, Open URL, File info, EQ preset,
+About, Update, Media Library) use the same frame. A right-click on the frame is the main menu;
+on the picture, the art's own. A skin that's missing other sheets (`cbuttons.bmp`, `numbers.bmp`, ...) gets
 the base skin's, as in Winamp. The cover is always square:
 video thumbnails (16:9) are cropped to a centred square. Double-clicking docked art moves it on
 (right → below → left); dragging it moves the window. Docked left, the main window and the stack
@@ -367,7 +382,7 @@ share the one Winamp window here, so the active one is the one last clicked; a f
 is lit while its window has focus, and nothing is lit while the app isn't focused
 (`ui/src/lib/skin/focus.js`).
 
-Generic frames (album art, lyrics, MilkDrop, Open URL) carry their title in `gen.bmp`'s own
+Generic frames (album art, lyrics, MilkDrop, Open URL, Media Library and the rest) carry their title in `gen.bmp`'s own
 alphabet, A-Z in a lit row (y 88) and a dim one (y 96), each letter its own width, separated by
 1 px columns of the colour at x 0: measured per skin, as Webamp does. The title sits on the
 titlebar's centre fill between its end caps. A `gen.bmp` without those letters, or a skin with no
@@ -382,9 +397,48 @@ docks it back; its ✕ hides it. Drag the bottom-right corner to resize: the pla
 in Winamp's 25×29 px steps (from 275×116), album art keeping its picture square. The Winamp
 window owns where each panel lives; floating windows ask it to dock, hide or toggle panels
 through `winamp-panel-dock` / `winamp-panel-toggle` events, and Rust tells it when one closes
-(`winamp-panel-closed`, Alt+F4 included). No snapping yet, and on Wayland the compositor decides
-where a floating window opens. Search results don't carry over between docked and floating.
+(`winamp-panel-closed`, Alt+F4 included). They don't dock by dragging yet (KDE's edge snapping is
+KWin's own), and on Wayland the compositor decides where a floating window opens; elsewhere each
+opens where it was last left. A right-click on a floating window's frame is the main menu. Search results don't carry over between docked and floating.
 Code: `ui/src/lib/components/AlbumArtWindow.svelte`, `FloatingListPanel.svelte`.
+
+## Media Library
+
+Not Winamp's own library re-created, on purpose: Limusic's pages are the library. Alt+L, the main
+menu's **Media Library**, Go to artist / album, File info's links and the playlist's Browse
+library… open a window of its own (`winamp-library`, `MediaLibraryWindow.svelte`) with Limusic's
+sidebar, pages and titlebar inside the skin's generic frame titled MEDIA LIBRARY. Dragged by its
+titlebar, resized from its sides and bottom (not the top: that's the titlebar's), closed with ✕,
+Escape or Alt+L; it reopens with Winamp mode if it was open when the app quit, at its last size.
+
+- **Colours:** Limusic's theme tokens set from the skin's `genex.bmp` (`libraryTheme.js`): lists
+  and pages in the item colours, the sidebar and popovers in the window's, the selection colour
+  as the accent, square corners, Limusic's dark styles when the lists are dark. Each text colour
+  is nudged toward black or white just far enough to read (`contrast.js`), since some skins'
+  palettes don't. A skin without `genex.bmp` leaves Limusic's own default theme, dark or light as
+  the skin's `main.bmp` averages (`SkinPayload.mainDark`).
+- **What's Limusic's in it:** the account, library, saved albums and artists, playlist marks and
+  blocked artists, loaded as its window loads them (`initLibraryWindow`); its dialogs (Add to
+  playlist, New playlist, Share, Open link, the channel picker, the command palette, the keys
+  list) and toasts; Ctrl+K, Ctrl+H, F5. Its titlebar is the toolbar: back, forward, refresh, the
+  account, Open link, Discord, Last.fm.
+- **Left out** (Limusic's window's): the Limusic wordmark and light/dark switch, Settings (Ctrl+P
+  opens them there), Listen Together, theater, the mini player, the importer, the player bar.
+  Hidden by CSS from `MediaLibraryWindow.svelte`, by position in `Sidebar.svelte` and
+  `Titlebar.svelte`, so an upstream reshuffle there wants a look.
+
+## First run
+
+Winamp mode is where the app starts unless **Always start in Winamp mode** is unticked. With
+nothing remembered yet (`winamp.json` empty), it opens Winamp's usual set: the EQ, search and
+playlist docked, and the Media Library. Into an empty queue it cues Winamp's welcome, the llama
+intro (a YouTube upload, video `HaF-nRS_CWM`, never shipped with the app) under the name Winamp's
+playlist gave it, "DJ Mike Llama - Llama Whippin' Intro", paused until Play: `winamp_queue_intro`
+loads it the way a saved queue comes back at launch, since an ordinary add to an empty queue
+starts playing. About's **Cue the Llama** puts it back (onto the end of a queue that has
+something). With nothing playing, or the llama cued and not started, the title scrolls a welcome
+and where to start; empty search results say the same in a few lines (`searchWelcome`), with
+"or just hit Play!" while something's cued and a sign-in hint until there's an account.
 
 ## Updates
 
@@ -461,8 +515,7 @@ ratio on open and cancels it with the webview zoom. Don't remove that.
 
 Each Winamp window is one canvas, redrawn whole by `ui/src/lib/skin/render/loop.js`, but only
 when it can change: every frame for half a second after input (mouse, wheel, keys, focus,
-resize) or a pick in our GTK menu (`wake()`), and while something moves (lyrics easing to the
-sung line); otherwise once per marquee step (220 ms), which covers the scrolling title, the
+resize) or a pick in our GTK menu (`wake()`), and while something moves; otherwise once per marquee step (220 ms), which covers the scrolling title, the
 clocks and whatever the backend changed. So with no input, a change can show up to 220 ms late.
 
 The analyzer is the one thing that moves every frame while music plays, so it has a canvas of
@@ -527,8 +580,8 @@ error and the app aborts.
 ## Not done yet
 
 - Shade mode; oscilloscope; EQ AUTO (per-track presets); Jump to time.
-- A Media Library window of its own: Limusic's window stands in (Media Library, Alt+L).
-- Snapping floating windows together.
+- Docking floating windows by dragging them to the stack: needs window positions, so Windows,
+  macOS and X11 only; on native Wayland the titlebar double-click stays the way.
 - Search typeahead.
 - Fractional desktop scaling (e.g. 125%) blurs the skin evenly: GTK3 renders the window at 1x and
   the compositor scales it. Pixel art can't be both sharp and evenly sized at 1.25x.

@@ -54,6 +54,7 @@
 	import FileInfoWindow from '$lib/components/FileInfoWindow.svelte';
 	import AboutWindow from '$lib/components/AboutWindow.svelte';
 	import UpdateWindow from '$lib/components/UpdateWindow.svelte';
+	import MediaLibraryWindow from '$lib/components/MediaLibraryWindow.svelte';
 	import NowPlaying from '$lib/components/NowPlaying.svelte';
 	import TheaterMode from '$lib/components/TheaterMode.svelte';
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
@@ -218,6 +219,8 @@
 	const isWinampFileInfo = browser && getCurrentWindow().label === 'winamp-fileinfo';
 	const isWinampAbout = browser && getCurrentWindow().label === 'winamp-about';
 	const isWinampUpdate = browser && getCurrentWindow().label === 'winamp-update';
+	// Limusic's pages in the skin's frame and colours (skin/library.js).
+	const isWinampLibrary = browser && getCurrentWindow().label === 'winamp-library';
 	const winampPanels: Record<string, 'playlist' | 'search' | 'eq' | 'lyrics'> = {
 		'winamp-playlist': 'playlist',
 		'winamp-search': 'search',
@@ -227,7 +230,8 @@
 	const winampList = browser ? winampPanels[getCurrentWindow().label] : undefined;
 
 	// Apply the saved accent color before the first paint (ssr=false → nothing renders until now).
-	if (browser) initTheme();
+	// Not in the Media Library: its colours are the skin's (skin/libraryTheme.js).
+	if (browser && !isWinampLibrary) initTheme();
 	// The custom app icon (#173) is a file on disk, so the titlebar has to ask Rust for it.
 	if (browser) loadAppIcon();
 
@@ -236,7 +240,7 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampFileInfo || isWinampAbout || isWinampUpdate) {
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampFileInfo || isWinampAbout || isWinampUpdate || isWinampLibrary) {
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
@@ -304,6 +308,15 @@
 	<AboutWindow />
 {:else if isWinampUpdate}
 	<UpdateWindow />
+{:else if isWinampLibrary}
+	<MediaLibraryWindow>
+		<Sidebar />
+		<main class="min-w-0 flex-1 overflow-y-auto">
+			{#key `${auth.epoch}:${ui.epoch}`}
+				{@render children()}
+			{/key}
+		</main>
+	</MediaLibraryWindow>
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
 	     rounds the corners (the compositor can't round an undecorated window for us on Linux).

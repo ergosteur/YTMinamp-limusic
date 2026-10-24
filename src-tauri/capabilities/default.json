@@ -16,7 +16,8 @@
     "winamp-eqsave",
     "winamp-fileinfo",
     "winamp-about",
-    "winamp-update"
+    "winamp-update",
+    "winamp-library"
   ],
   "permissions": [
     "core:default",

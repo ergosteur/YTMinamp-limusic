@@ -13,9 +13,10 @@
 // table on the main thread, so overlapping the two would deadlock. A right-click while a menu is
 // in flight is dropped, and the previous menu is freed before the next is built.
 import { Menu } from '@tauri-apps/api/menu';
-import { listen } from '@tauri-apps/api/event';
+import { emitTo, listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
+import { Window } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import * as api from '$lib/api';
 import { wake } from './render/loop.js';
@@ -77,12 +78,13 @@ import {
 } from './skinApi.js';
 import { toggleTimeRemaining, toggleVisualizer } from './input.js';
 import { EQ_PRESETS } from './render/equalizer.js';
-import { lyricsNow, lyricsShow, lyricsTrack, pickedLyrics, toggleLyricsShow } from './lyrics.js';
+import { lyricsShow, toggleLyricsShow } from './lyrics.js';
 import { doubleFactor, zoomFactor } from './pixels.js';
 import { updateState } from '$lib/updater.svelte';
 import { thumb } from '$lib/thumb';
 import { SEARCH_KINDS, isSongRow } from './searchKinds.js';
-import { openInLimusic, toggleLimusic } from './navigate.js';
+import { openLimusicSettings, toggleLimusic } from './navigate.js';
+import { libraryShown, openLibrary, toggleLibrary } from './library.js';
 import { copyText } from '$lib/clipboard';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
@@ -100,8 +102,10 @@ import {
 
 /**
  * Where a menu opens: the click, in window coordinates. Without a position GTK opens it "at the
- * pointer", which Wayland doesn't reveal to apps, so it landed anywhere (and parentless).
- * @typedef {{ x: number, y: number }} MenuAt
+ * pointer", which Wayland doesn't reveal to apps, so it landed anywhere (and parentless). `on`:
+ * another window's label, the click being in that window's coordinates, already zoomed (the
+ * Media Library's frame asking for the main menu, see `onMainMenuRequest`).
+ * @typedef {{ x: number, y: number, on?: string }} MenuAt
  */
 
 /** @typedef {NonNullable<Parameters<typeof Menu.new>[0]>} MenuOptions */
@@ -157,7 +161,7 @@ async function popup(describe, at) {
 	try {
 		const options = await describe();
 		// The click is in CSS px; the window counts zoomed px (the DPI fix, double size).
-		at = { x: at.x * zoomFactor(), y: at.y * zoomFactor() };
+		if (!at.on) at = { x: at.x * zoomFactor(), y: at.y * zoomFactor() };
 		if (gtkMenus !== false) {
 			if (!listening) {
 				// Hears every window's picks; the ids are this window's own (see toEntries).
@@ -169,7 +173,7 @@ async function popup(describe, at) {
 			}
 			actions = new Map();
 			try {
-				await api.winampPopupMenu(toEntries(options.items ?? []), at.x, at.y);
+				await api.winampPopupMenu(toEntries(options.items ?? []), at.x, at.y, at.on);
 				gtkMenus = true;
 				return;
 			} catch (e) {
@@ -184,7 +188,7 @@ async function popup(describe, at) {
 		// Tauri's items take no shortcut text (an accelerator there would register the key).
 		const menu = await Menu.new(stripAccels(options));
 		last = menu;
-		await menu.popup(new LogicalPosition(at.x, at.y));
+		await menu.popup(new LogicalPosition(at.x, at.y), (at.on && (await Window.getByLabel(at.on))) || undefined);
 	} finally {
 		busy = false;
 	}
@@ -501,11 +505,11 @@ function itemExtras(item) {
 	}
 	if (!browse && item.artist_id) {
 		const id = item.artist_id;
-		out.push({ text: 'Go to artist', action: () => openInLimusic(`/artist/${encodeURIComponent(id)}`).catch(log('go to artist')) });
+		out.push({ text: 'Go to artist', action: () => openLibrary(`/artist/${encodeURIComponent(id)}`).catch(log('go to artist')) });
 	}
 	if (!browse && item.album_id) {
 		const id = item.album_id;
-		out.push({ text: 'Go to album', action: () => openInLimusic(`/album/${encodeURIComponent(id)}`).catch(log('go to album')) });
+		out.push({ text: 'Go to album', action: () => openLibrary(`/album/${encodeURIComponent(id)}`).catch(log('go to album')) });
 	}
 	if (link) {
 		out.push(
@@ -602,7 +606,7 @@ export function showPlaylistMenu(which, at) {
 					{ text: 'Open YouTube URL…', action: openUrlDialog },
 					SEPARATOR,
 					// Limusic's own Library page, in the full window, for now.
-					{ text: 'Browse library…', action: () => openInLimusic('/library').catch(log('browse library')) }
+					{ text: 'Browse library…', action: () => openLibrary('/library').catch(log('browse library')) }
 				]
 			};
 		}
@@ -719,85 +723,23 @@ export function showPresetsMenu(at) {
 
 /**
  * The lyrics panel's menu: Limusic's romanization and translation switches, and the text size.
+ * The source and its timing are in the lyrics' own bar (Limusic's picker).
  * @param {MenuAt} at
  */
 export function showLyricsMenu(at) {
-	return popup(async () => {
-		const lyrics = lyricsNow().lyrics;
-		const lines = lyrics?.lines ?? [];
-		const has = (/** @type {'romanized' | 'translation'} */ what) => lines.some((l) => l[what]);
-		const track = lyricsTrack();
-		const providers = track ? await api.lyricsProviders().catch(() => []) : [];
-		/** Keep `source`'s lyrics for this song (null: back to the provider order), as Limusic's picker does. */
-		const choose = (/** @type {string | null} */ source) => {
-			if (!track) return;
-			api
-				.chooseLyricsSource({ ...track, source })
-				.then((l) => {
-					pickedLyrics(l, track.videoId);
-					flashMarquee(l ? `Lyrics from ${l.source.replace(/^Source:\s*/, '')}` : 'No lyrics from there');
-				})
-				.catch((e) => flashMarquee(`Couldn't switch lyrics: ${e}`));
-		};
-		const offset = lyrics?.offset_ms ?? 0;
-		/** Move the timing by `by` ms (0: back to none), remembered for this song. */
-		const nudge = (/** @type {number} */ by) => {
-			if (!track || !lyrics) return;
-			const next = by === 0 ? 0 : Math.max(-15000, Math.min(15000, offset + by));
-			api
-				.setLyricsOffset(track.videoId, next)
-				.then(() => {
-					pickedLyrics({ ...lyrics, offset_ms: next }, track.videoId);
-					flashMarquee(`Lyrics timing: ${next > 0 ? '+' : ''}${(next / 1000).toFixed(2)}s`);
-				})
-				.catch((e) => flashMarquee(`Couldn't change the timing: ${e}`));
-		};
-		return {
+	return popup(
+		async () => ({
 			items: [
-				{
-					text: has('romanized') ? 'Romanization' : 'Romanization (none for these lyrics)',
-					checked: lyricsShow.romanized,
-					action: () => toggleLyricsShow('romanized')
-				},
-				{
-					text: has('translation') ? 'Translations' : 'Translations (none for these lyrics)',
-					checked: lyricsShow.translated,
-					action: () => toggleLyricsShow('translated')
-				},
+				{ text: 'Romanization', checked: lyricsShow.romanized, action: () => toggleLyricsShow('romanized') },
+				{ text: 'Translations', checked: lyricsShow.translated, action: () => toggleLyricsShow('translated') },
 				SEPARATOR,
 				{ text: 'Bigger text', accel: 'Ctrl+=', action: () => zoomLyrics(1) },
 				{ text: 'Smaller text', accel: 'Ctrl+-', action: () => zoomLyrics(-1) },
-				{ text: 'Normal size', accel: 'Ctrl+0', action: () => zoomLyrics(0) },
-				SEPARATOR,
-				track
-					? {
-							text: 'Lyrics source',
-							items: [
-								{ text: 'Automatic', checked: !!lyrics && !lyrics.pinned, action: () => choose(null) },
-								SEPARATOR,
-								...providers
-									.filter((p) => p.on)
-									.map((p) => ({
-										text: p.name,
-										checked: !!lyrics?.pinned && lyrics.provider === p.id,
-										action: () => choose(p.id)
-									}))
-							]
-						}
-					: { text: 'Lyrics source', enabled: false },
-				lyrics?.synced
-					? {
-							text: `Timing (${offset > 0 ? '+' : ''}${(offset / 1000).toFixed(2)}s)`,
-							items: [
-								{ text: 'Earlier (0.25s)', action: () => nudge(-250) },
-								{ text: 'Later (0.25s)', action: () => nudge(250) },
-								{ text: 'Reset', enabled: offset !== 0, action: () => nudge(0) }
-							]
-						}
-					: { text: 'Timing', enabled: false }
+				{ text: 'Normal size', accel: 'Ctrl+0', action: () => zoomLyrics(0) }
 			]
-		};
-	}, at);
+		}),
+		at
+	);
 }
 
 /**
@@ -917,14 +859,15 @@ function placementItems(text, kind) {
  */
 export function showMainMenu(switchSkin, at) {
 	return popup(async () => {
-		const [list, library, stopAfter, limusicShown] = await Promise.all([
+		const [list, library, stopAfter, limusicShown, libraryOpen] = await Promise.all([
 			api.listWszSkins().catch((e) => {
 				log('list skins')(e);
 				return { dir: '', skins: [], current: null };
 			}),
 			libraryItems(),
 			api.stopAfterCurrentSet().catch(() => false),
-			api.limusicWindowShown().catch(() => false)
+			api.limusicWindowShown().catch(() => false),
+			libraryShown().catch(() => false)
 		]);
 		const repeat = playback.queue.repeat ?? 'off';
 		const art = uiState.art;
@@ -960,8 +903,9 @@ export function showMainMenu(switchSkin, at) {
 				// WACUP's: what's playing (Alt+3 picks the selected row instead when a list is active).
 				{ text: 'View file info...', accel: 'Alt+3', enabled: !!playback.now, action: showNowFileInfo },
 				SEPARATOR,
-				// Limusic's own window is the library: its pages, search, playlists.
-				check('Media Library (Limusic window)', limusicShown, 'Alt+L', () => toggleLimusic().catch(log('media library'))),
+				// Limusic's pages in the skin's frame (library.js); Limusic's own window beside it.
+				check('Media Library', libraryOpen, 'Alt+L', () => toggleLibrary().catch(log('media library'))),
+				check('Limusic window', limusicShown, 'Alt+M', () => toggleLimusic().catch(log('limusic window'))),
 				check('Playlist Editor', uiState.pl.open, 'Alt+E', () => togglePanel('playlist')),
 				check('Search', uiState.search.open, 'Alt+K', () => togglePanel('search')),
 				check('Equaliser', uiState.eq.open, 'Alt+G', () => togglePanel('eq')),
@@ -972,6 +916,8 @@ export function showMainMenu(switchSkin, at) {
 				{
 					text: 'Options',
 					items: [
+						{ text: 'Preferences...', accel: 'Ctrl+P', action: () => openLimusicSettings().catch(log('preferences')) },
+						SEPARATOR,
 						check('Always on top', uiState.alwaysOnTop, 'Ctrl+A', toggleAlwaysOnTop),
 						check('Double size', uiState.doubleSize, 'Ctrl+2', () => toggleDoubleSize()),
 						check('Time remaining', uiState.timeRemaining, 'Ctrl+T', toggleTimeRemaining)
@@ -1069,4 +1015,26 @@ export function showMainMenu(switchSkin, at) {
 			]
 		};
 	}, at);
+}
+
+/** Asks the Winamp window for its main menu over another window (`requestMainMenu`). */
+const MAIN_MENU_EVENT = 'winamp-main-menu';
+
+/**
+ * From a window without the main menu's state (the Media Library): ask the Winamp window to show
+ * its main menu here, at `at` in this window's CSS px.
+ * @param {MenuAt} at
+ */
+export function requestMainMenu(at) {
+	const f = zoomFactor();
+	const on = getCurrentWebviewWindow().label;
+	return emitTo('winamp', MAIN_MENU_EVENT, { x: at.x * f, y: at.y * f, on });
+}
+
+/**
+ * In the Winamp window: show the main menu wherever another window asks (`requestMainMenu`).
+ * @param {(at: MenuAt) => unknown} show the main menu at `at`
+ */
+export function onMainMenuRequest(show) {
+	return listen(MAIN_MENU_EVENT, (e) => show(/** @type {MenuAt} */ (e.payload)));
 }

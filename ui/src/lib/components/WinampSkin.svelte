@@ -5,19 +5,19 @@
 	// playback state, same reasoning as the mini player.
 	import { onMount } from 'svelte';
 	import { emit, emitTo, listen } from '@tauri-apps/api/event';
-	import { playback } from '$lib/player.svelte';
+	import { auth, playback } from '$lib/player.svelte';
 	import { logUi } from '$lib/errlog';
 	import { winampAudioInfo } from '$lib/api';
+	import { APP_NAME } from '../skin/brand.js';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics, lyricsEasing, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import { drawLyrics, lyricsViewRect } from '../skin/render/lyrics.js';
 	import { analyzerMoving, drawAnalyzer } from '../skin/render/visualizer.js';
 	import { VIS_POS } from '../skin/render/sprites.js';
 	import { analyzerColumns } from '../skin/testPattern.js';
-	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
+	import WinampLyricsView from './WinampLyricsView.svelte';
 	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
-	import { lyricsNow, sungLine } from '../skin/lyrics.js';
 	import { attachKeys, runKey } from '../skin/keys.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
 	import { applyRegionClip, drawMainWindow, sizeCanvas } from '../skin/render/mainWindow.js';
@@ -29,6 +29,9 @@
 	import { dockedLayout, hitLayout } from '../skin/layout.js';
 	import {
 		ART_CAPTION_EVENT,
+		loadAccount,
+		searchWelcome,
+		LLAMA_INTRO,
 		LYRICS_ZOOM_EVENT,
 		setArtCaption,
 		SEARCH_INPUT_ID,
@@ -46,7 +49,7 @@
 		setPanelOpen,
 		togglePanel
 	} from '../skin/skinApi.js';
-	import { showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showStopMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
+	import { onMainMenuRequest, showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showStopMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { uiState } from '../skin/uiState.js';
 	import { refreshLibrary } from '../skin/playlistActions.js';
 
@@ -73,16 +76,29 @@
 	/** The search box's "Songs ▾" button: where (beside the box), and what it says. */
 	let kindAt = $state(/** @type {{ x: number, y: number } | null} */ (null));
 	let kindText = $state('Songs');
-	/** Where the docked lyrics' footer goes (render/lyrics.js keeps the strip), while docked. */
-	let footerRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
+	/** Where the docked lyrics' HTML view goes (inside render/lyrics.js's frame), while docked. */
+	let lyricsRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
+	/** The lyrics' text size (uiState.lyrics.zoom), for that view. */
+	let lyricsZoom = $state(1);
 	/** The layout the canvas size/clip were last set for; null = not set yet. */
 	let shapedFor = /** @type {string | null} */ (null);
 
 	/** "Artist - Title", as the playlist shows it. */
 	function nowTitle() {
 		const now = playback.now;
-		if (!now) return '';
-		return now.artists ? `${now.artists} - ${now.title}` : now.title;
+		if (!now) return welcome();
+		const title = now.artists ? `${now.artists} - ${now.title}` : now.title;
+		// The llama intro cued (a first run, About's Cue the Llama) and not started: the welcome
+		// still, the intro after it, until Play.
+		const cued = now.videoId === LLAMA_INTRO.video_id && playback.paused && playback.position < 0.5;
+		return cued ? `${welcome()} ${title} ***` : title;
+	}
+
+	/** With nothing playing (a first run, an empty queue): a welcome, Winamp's own line, and where
+	 * to start, sign-in included until there's an account. */
+	function welcome() {
+		const signIn = auth.account?.signedIn ? '' : ' *** Sign in with the account button at the top of the Media Library';
+		return `*** Welcome to ${APP_NAME}! It really whips the llama's ass! *** To start, search in the Search window or open the Media Library (Alt+L)${signIn} ***`;
 	}
 
 	/** Keys in the search box: see `searchKeydown`. */
@@ -117,6 +133,8 @@
 	}
 
 	onMount(() => {
+		// Whether the welcomes suggest signing in (the ticker's above, the search panel's).
+		loadAccount();
 		let stopLoop = () => {};
 		// The DPI fix first, then double size on top of it, then everything else remembered.
 		const pinned = pinOneToOnePixels().catch((e) => logUi('error', `winamp zoom pin failed: ${e}`));
@@ -229,6 +247,10 @@
 		const unlistenToggle = listen('winamp-panel-toggle', (e) =>
 			togglePanel(/** @type {import('../skin/layout.js').PanelKind} */ (e.payload))
 		);
+		// The main menu, asked for by a right-click on the Media Library's frame.
+		const unlistenMainMenu = onMainMenuRequest((at) =>
+			showMainMenu((path) => applySkin(selectSkin(path)), at).catch((e) => console.error('menu failed', e))
+		);
 		// Shortcuts pressed in a floating panel run here.
 		const unlistenKey = listen('winamp-key', (e) => runKey(/** @type {import('../skin/keys.js').KeyAction} */ (e.payload)));
 		// The lyrics' size, changed with Ctrl+wheel over a floating lyrics window.
@@ -241,9 +263,9 @@
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
 		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update'} */ (e.payload);
-			// The Open URL, save-preset, file info, about and update windows: nothing here tracks them.
-			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update') return;
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'library'} */ (e.payload);
+			// The Open URL, save-preset, file info, about, update and library windows: nothing here tracks them.
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update' || kind === 'library') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
 			if (view.dock === 'float') view.open = false;
@@ -280,7 +302,6 @@
 					pledit,
 					kbps: playback.now ? uiState.kbps : null,
 					khz: playback.now ? uiState.khz : null,
-					loading: !playback.now,
 					playing: !playback.paused,
 					positionSecs: uiState.draggingSeek ? uiState.draggingPositionSecs : playback.position,
 					durationSecs: playback.duration,
@@ -310,8 +331,9 @@
 			const searchPanel = layout.panels.find((p) => p.kind === 'search');
 			if (kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
 			const lyricsPanel = layout.panels.find((p) => p.kind === 'lyrics');
-			const r = lyricsPanel ? lyricsFooterRect(sprites, lyricsPanel) : null;
-			if (r?.x !== footerRect?.x || r?.y !== footerRect?.y || r?.w !== footerRect?.w) footerRect = r;
+			const r = lyricsPanel ? lyricsViewRect(sprites, lyricsPanel) : null;
+			if (r?.x !== lyricsRect?.x || r?.y !== lyricsRect?.y || r?.w !== lyricsRect?.w || r?.h !== lyricsRect?.h) lyricsRect = r;
+			if (uiState.lyrics.zoom !== lyricsZoom) lyricsZoom = uiState.lyrics.zoom;
 			for (const panel of layout.panels) {
 				if (panel.kind === 'art') {
 					const caption = uiState.art.caption ? { text: playback.now?.album ?? '', pledit } : null;
@@ -319,20 +341,18 @@
 					continue;
 				}
 				if (panel.kind === 'lyrics') {
-					const state = lyricsNow();
-					const sung = state.lyrics ? sungLine(state.lyrics) : -1;
-					drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, panel, uiState.lyrics.closePressed, uiState.lyrics.zoom);
+					drawLyrics(ctx, sprites, pledit, panel, uiState.lyrics.closePressed);
 					continue;
 				}
 				ctx.save();
 				ctx.translate(panel.x, 0);
-				if (panel.kind === 'search') drawSearch(ctx, sprites, pledit, uiState.search, panel.y);
+				if (panel.kind === 'search') drawSearch(ctx, sprites, pledit, uiState.search, panel.y, undefined, searchWelcome());
 				else if (panel.kind === 'eq') drawEqualizer(ctx, sprites, uiState.eq, panel.y);
 				else drawPlaylist(ctx, sprites, pledit, playback.queue, uiState.pl, panel.y);
 				ctx.restore();
 			}
 			placeSearchInput(searchPanel ?? null);
-		}, lyricsEasing);
+		});
 		const stopVizLoop = startRenderLoop(
 			(nowMs) => {
 				const on = uiState.visMode === 'analyzer' && sprites.size > 0;
@@ -356,6 +376,7 @@
 			unlistenMarquee.then((f) => f());
 			unlistenClosed.then((f) => f());
 			unlistenKey.then((f) => f());
+			unlistenMainMenu.then((f) => f());
 			unlistenZoom.then((f) => f());
 			unlistenCaption.then((f) => f());
 			detachKeys();
@@ -407,8 +428,8 @@
 			}}>{kindText} ▾</button
 		>
 	{/if}
-	{#if footerRect}
-		<WinampLyricsFooter rect={footerRect} {pledit} />
+	{#if lyricsRect}
+		<WinampLyricsView rect={lyricsRect} {pledit} zoom={lyricsZoom} onmenu={(at) => showLyricsMenu(at).catch((e) => console.error('menu failed', e))} />
 	{/if}
 	{#if status}
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-white">

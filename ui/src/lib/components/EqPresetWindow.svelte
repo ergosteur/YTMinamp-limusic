@@ -4,7 +4,6 @@
 	// Open URL one: type a name, Enter or OK saves the EQ as it is now under it (replacing a preset
 	// of the same name), Esc or ✕ closes it. Presets live in winamp.json's `eqPresets`.
 	import { onMount } from 'svelte';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { closeWinampPanel, resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
@@ -12,6 +11,7 @@
 	import { artFrame, onCloseButton, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
+	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { flushPrefs, loadPrefs, pref, savePref } from '../skin/prefs.js';
 
@@ -116,42 +116,22 @@
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 		requestAnimationFrame(() => input?.focus());
 
-		/** A titlebar press becomes a window drag once the mouse moves. */
-		let press = /** @type {{ x: number, y: number } | null} */ (null);
-		const onDown = (/** @type {MouseEvent} */ e) => {
-			if (e.button !== 0) return;
-			if (onCloseButton(e, WIDTH)) {
-				closePressed = true;
+		const stopFrameMouse = frameMouse(canvas, {
+			onClose: (e) => onCloseButton(e, WIDTH),
+			inset: () => inset,
+			pressed: (down) => {
+				closePressed = down;
 				draw();
-			} else if (e.clientY < inset.top) {
-				press = { x: e.screenX, y: e.screenY };
-			}
-		};
-		const onMove = (/** @type {MouseEvent} */ e) => {
-			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
-				press = null;
-				getCurrentWindow().startDragging();
-			}
-		};
-		const onUp = (/** @type {MouseEvent} */ e) => {
-			press = null;
-			if (!closePressed) return;
-			closePressed = false;
-			// Released off the button: no close, as in Winamp.
-			if (onCloseButton(e, WIDTH)) close();
-			else draw();
-		};
-		canvas.addEventListener('mousedown', onDown);
-		window.addEventListener('mousemove', onMove);
-		window.addEventListener('mouseup', onUp);
+			},
+			close
+		});
 
 		return () => {
 			unlistenDouble.then((f) => f());
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
 			unlistenSkin.then((f) => f());
-			window.removeEventListener('mousemove', onMove);
-			window.removeEventListener('mouseup', onUp);
+			stopFrameMouse();
 		};
 	});
 

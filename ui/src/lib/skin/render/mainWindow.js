@@ -137,7 +137,7 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
     drawTimeDigits(ctx, numbers, numsEx, secs, remaining);
   }
 
-  drawTitle(ctx, uiState.loading ? "loading..." : uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll);
+  drawTitle(ctx, uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll);
 
   const text = sprites.get("text");
   if (text) {

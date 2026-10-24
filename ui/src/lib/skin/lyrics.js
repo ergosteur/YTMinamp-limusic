@@ -1,14 +1,7 @@
-// The playing track's lyrics for the Winamp lyrics panel: fetched once per track, the same
-// request Limusic's own lyrics view makes (LyricsView.svelte), and where in them the song is.
-import * as api from '$lib/api';
-import { playback } from '$lib/player.svelte';
-import { uiState } from './uiState.js';
+// The lyrics panel's romanization and translation switches, for its right-click menu: Limusic's
+// own (LyricsView.svelte), the same localStorage keys and defaults, so a switch flipped in either
+// place applies in both, and the `storage` event carries it between windows.
 
-/** @typedef {{ status: 'none' | 'loading' | 'missing' | 'instrumental' | 'ready', lyrics: api.Lyrics | null }} LyricsState */
-
-// Limusic's own romanization and translation switches (LyricsView.svelte): the same localStorage
-// keys and defaults, so a switch flipped in either place applies in both, and the `storage` event
-// carries it between windows.
 const SHOW_KEYS = { romanized: 'lyrics_romanized', translated: 'lyrics_translated' };
 const SHOW_DEFAULTS = { romanized: false, translated: true };
 
@@ -22,7 +15,7 @@ function loadShow(what) {
 	}
 }
 
-/** What the lyrics panel shows under each line. */
+/** What the lyrics show under each line. */
 export const lyricsShow = { romanized: loadShow('romanized'), translated: loadShow('translated') };
 window.addEventListener('storage', (e) => {
 	if (e.key === SHOW_KEYS.romanized) lyricsShow.romanized = loadShow('romanized');
@@ -37,105 +30,6 @@ export function toggleLyricsShow(what) {
 	} catch {
 		// Private storage: it still applies for this session.
 	}
-}
-
-let requested = '';
-/** Failed fetches per video, and how often and how far apart they're tried again. */
-const retries = new Map();
-const LYRICS_RETRIES = 2;
-const LYRICS_RETRY_MS = 15_000;
-/** @type {LyricsState} */
-let current = { status: 'none', lyrics: null };
-
-/** "3:45" → 225. @param {string | undefined} d */
-function seconds(d) {
-	if (!d) return undefined;
-	const parts = d.split(':').map(Number);
-	return parts.some(Number.isNaN) ? undefined : parts.reduce((a, b) => a * 60 + b, 0);
-}
-
-/** The lyrics for what's playing, starting the fetch when the track changes. */
-export function lyricsNow() {
-	const now = playback.now;
-	if (!now) {
-		requested = '';
-		current = { status: 'none', lyrics: null };
-		return current;
-	}
-	if (now.videoId !== requested) {
-		const id = (requested = now.videoId);
-		current = { status: 'loading', lyrics: null };
-		uiState.lyrics.nudge = 0;
-		api
-			.getLyrics({
-				videoId: id,
-				title: now.title,
-				artists: now.artists,
-				album: now.album ?? undefined,
-				// The track's own length: playback.duration can still be the last track's.
-				duration: seconds(now.duration)
-			})
-			.then((l) => {
-				if (requested !== id) return;
-				current = !l
-					? { status: 'missing', lyrics: null }
-					: { status: l.instrumental ? 'instrumental' : 'ready', lyrics: l };
-			})
-			.catch(() => {
-				if (requested !== id) return;
-				current = { status: 'missing', lyrics: null };
-				// A failed fetch (offline for a moment) isn't "no lyrics": ask again in a while, a
-				// couple of times, if the song is still on. A missing result above isn't retried.
-				const tries = (retries.get(id) ?? 0) + 1;
-				retries.set(id, tries);
-				if (tries <= LYRICS_RETRIES) {
-					setTimeout(() => {
-						if (requested === id) requested = '';
-					}, LYRICS_RETRY_MS * tries);
-				}
-			});
-	}
-	return current;
-}
-
-/** What the lyrics are for, as Limusic's source picker wants it (LyricsSourcePicker's `track`). */
-export function lyricsTrack() {
-	const now = playback.now;
-	if (!now) return null;
-	return {
-		videoId: now.videoId,
-		title: now.title,
-		artists: now.artists,
-		album: now.album ?? undefined,
-		duration: seconds(now.duration) ?? (playback.duration > 0 ? playback.duration : undefined)
-	};
-}
-
-/**
- * Lyrics the source picker (or the panel's menu) chose: shown if the song hasn't moved on.
- * @param {api.Lyrics | null} lyrics @param {string} videoId
- */
-export function pickedLyrics(lyrics, videoId) {
-	if (videoId !== requested) return;
-	current = !lyrics ? { status: 'missing', lyrics: null } : { status: lyrics.instrumental ? 'instrumental' : 'ready', lyrics };
-}
-
-/** Where the song is now, in ms, between the position ticks (they land at about 4 Hz). */
-function positionMs() {
-	const drift = playback.paused ? 0 : (performance.now() - playback.positionAt) / 1000;
-	return (playback.position + drift) * 1000;
-}
-
-/** The last timed line whose cue has passed, or -1 (untimed lyrics, or before the first). */
-export function sungLine(/** @type {api.Lyrics} */ lyrics) {
-	if (!lyrics.synced) return -1;
-	const ms = positionMs() - (lyrics.offset_ms ?? 0);
-	let line = -1;
-	for (let i = 0; i < lyrics.lines.length; i++) {
-		const t = lyrics.lines[i].time_ms;
-		if (t === undefined) continue;
-		if (t > ms) break;
-		line = i;
-	}
-	return line;
+	// `storage` only reaches the other windows: this one's LyricsView hears it from here.
+	window.dispatchEvent(new StorageEvent('storage', { key: SHOW_KEYS[what] }));
 }

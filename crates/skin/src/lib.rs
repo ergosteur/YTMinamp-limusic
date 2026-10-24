@@ -11,6 +11,7 @@
 mod archive;
 mod bmp;
 mod error;
+mod genex;
 mod pledit;
 mod region;
 mod viscolor;
@@ -19,6 +20,7 @@ use std::collections::HashMap;
 
 pub use bmp::Image as Sprite;
 pub use error::Error;
+pub use genex::{colors as genex_colors, Genex};
 pub use pledit::Pledit;
 pub use region::Region;
 

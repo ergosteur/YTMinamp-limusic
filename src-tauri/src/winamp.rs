@@ -20,8 +20,8 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 11] = [
-    "art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about", "update",
+pub const PANELS: [&str; 12] = [
+    "art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about", "update", "library",
 ];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
@@ -38,6 +38,33 @@ pub fn panel_label(panel: &str) -> Result<String, String> {
 /// Whether `label` is one of the floating panel windows.
 pub fn is_panel_label(label: &str) -> bool {
     label.strip_prefix("winamp-").is_some_and(|p| PANELS.contains(&p))
+}
+
+/// Whether `label` is a Winamp window, the main one or a panel's.
+pub fn is_winamp_label(label: &str) -> bool {
+    label == LABEL || is_panel_label(label)
+}
+
+/// Every Winamp window's label.
+pub fn window_labels() -> impl Iterator<Item = String> {
+    std::iter::once(LABEL.to_owned()).chain(PANELS.iter().map(|p| format!("winamp-{p}")))
+}
+
+/// Put a Winamp window back where it was last left, as the window-state plugin recorded it
+/// (lib.rs), and at its last size too if `size`. Only where windows can be placed: native Wayland
+/// lets the compositor choose. The rest of their sizes are the skin's, set by the UI.
+fn restore_place(win: &tauri::WebviewWindow, size: bool) {
+    use tauri_plugin_window_state::{StateFlags, WindowExt};
+    let mut flags = StateFlags::empty();
+    if positions_known() {
+        flags |= StateFlags::POSITION;
+    }
+    if size {
+        flags |= StateFlags::SIZE;
+    }
+    if !flags.is_empty() {
+        let _ = win.restore_state(flags);
+    }
 }
 
 /// `main.bmp` at 1x — classic Winamp's base main-window size. The skin UI resizes the window
@@ -74,6 +101,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
         });
         #[cfg(target_os = "linux")]
         crate::tune_webview_labelled(app, LABEL, false);
+        restore_place(&win, false);
         let _ = win.show();
         let _ = win.set_focus();
     }
@@ -185,20 +213,32 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "fileinfo" => "File Info",
         "about" => "About YTMinamp",
         "update" => "YTMinamp Update",
+        "library" => "Media Library",
         _ => "Search",
     };
     // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a
     // non-resizable window to the screen, and switching resizable on just before the fullscreen
     // request races the compositor (it fullscreens at the old size, about nine times in ten).
-    let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+    // The Media Library, File info and About resize from their frame's edges (frameWindow.js),
+    // down to a size their frame and contents still fit.
+    let min_size = match panel {
+        "library" => Some((400.0, 300.0)),
+        "fileinfo" => Some((300.0, 150.0)),
+        "about" => Some((300.0, 200.0)),
+        _ => None,
+    };
+    let mut win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
-        .resizable(panel == "milkdrop")
+        .resizable(panel == "milkdrop" || min_size.is_some())
         .decorations(false)
         .transparent(true)
         .shadow(false)
         .always_on_top(always_on_top(app))
         .visible(false);
+    if let Some((w, h)) = min_size {
+        win = win.min_inner_size(w, h);
+    }
     let win = crate::http::proxied(win)
         .build()
         .map_err(|e| format!("couldn't open the {title} window: {e}"))?;
@@ -228,6 +268,8 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
             let _ = handle.emit_to(LABEL, PANEL_CLOSED_EVENT, &name);
         }
     });
+    // The Media Library's size is the user's; the others' are the skin's or their own prefs.
+    restore_place(&win, panel == "library");
     let _ = win.show();
     let _ = win.set_focus();
     Ok(())
@@ -317,9 +359,13 @@ thread_local! {
 /// every event stops, while the popup command keeps the window's resource table locked. Both
 /// whole-UI freezes came from that. This popup has no loop to get stuck in.
 #[cfg(target_os = "linux")]
+///
+/// Picks go to `label`, the window asking; the menu shows over `on` if given (the Media Library's
+/// frame showing the Winamp window's main menu), else over `label`.
 pub fn popup_menu(
     app: &AppHandle,
     label: String,
+    on: Option<String>,
     entries: Vec<MenuEntry>,
     x: f64,
     y: f64,
@@ -327,7 +373,7 @@ pub fn popup_menu(
     let handle = app.clone();
     app.run_on_main_thread(move || {
         use gtk::prelude::*;
-        let Some(win) = handle.get_webview_window(&label) else { return };
+        let Some(win) = handle.get_webview_window(on.as_deref().unwrap_or(&label)) else { return };
         let Ok(gtk_window) = win.gtk_window() else { return };
         let Some(gdk_window) = gtk_window.window() else { return };
 
@@ -432,6 +478,11 @@ pub struct SkinPayload {
     /// `(r, g, b)` triples, in `viscolor.txt` order.
     pub viscolor: Vec<(u8, u8, u8)>,
     pub pledit: skin::Pledit,
+    /// The Media Library's colours, from the skin's own `genex.bmp`. A skin without one leaves
+    /// the library in Limusic's own theme, light or dark as [`Self::main_dark`] says.
+    pub genex: Option<skin::Genex>,
+    /// Whether `main.bmp` is mostly dark.
+    pub main_dark: bool,
 }
 
 #[derive(Serialize)]
@@ -489,7 +540,7 @@ pub fn ui_prefs(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
 
 /// "Always start in Winamp mode" (the main menu's checkbox, winamp.json's `startInWinamp`).
 pub fn start_in_winamp(app: &AppHandle) -> bool {
-    ui_prefs(app).get("startInWinamp").and_then(serde_json::Value::as_bool).unwrap_or(false)
+    ui_prefs(app).get("startInWinamp").and_then(serde_json::Value::as_bool).unwrap_or(true)
 }
 
 /// Merge `patch`'s top-level keys into the UI's remembered state. Per key, not wholesale, so
@@ -712,12 +763,17 @@ const FROM_BASE: &[&str] = &[
     "numbers", "text", "pledit", "eqmain", "eq_ex", "mb", "video",
 ];
 
+/// The built-in base skin, parsed once.
+fn base_skin() -> Option<&'static skin::Skin> {
+    static BASE: std::sync::OnceLock<Option<skin::Skin>> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| skin::load(DEFAULT_SKIN).ok()).as_ref()
+}
+
 /// Fill the sheets `skin` lacks from the built-in base skin, as Winamp does, so a skin without,
 /// say, `cbuttons.bmp` shows the base buttons rather than none. `numbers` is filled even beside
 /// a skin's own `nums_ex`, which the UI prefers anyway.
 fn fill_from_base(skin: &mut skin::Skin) {
-    static BASE: std::sync::OnceLock<Option<skin::Skin>> = std::sync::OnceLock::new();
-    let Some(base) = BASE.get_or_init(|| skin::load(DEFAULT_SKIN).ok()) else { return };
+    let Some(base) = base_skin() else { return };
     for name in FROM_BASE {
         if let (false, Some(sprite)) = (skin.sprites.contains_key(*name), base.sprite(name)) {
             skin.sprites.insert((*name).to_owned(), sprite.clone());
@@ -736,6 +792,8 @@ async fn load(path: Option<&str>) -> Result<SkinPayload, String> {
     let mut parsed = skin::load(&bytes).map_err(|e| e.to_string())?;
     fill_from_base(&mut parsed);
 
+    let genex = parsed.sprite("genex").and_then(skin::genex_colors);
+    let main_dark = parsed.sprite("main").is_some_and(|m| mean_luma(m) < 0.5);
     let mut sprites = HashMap::new();
     for (name, sprite) in &parsed.sprites {
         let png_data_url = encode_png(sprite)?;
@@ -747,7 +805,17 @@ async fn load(path: Option<&str>) -> Result<SkinPayload, String> {
         region: parsed.region.map(|r| SkinRegion { normal: r.normal, equalizer: r.equalizer }),
         viscolor: parsed.viscolor,
         pledit: parsed.pledit,
+        genex,
+        main_dark,
     })
+}
+
+/// `image`'s mean brightness, 0 (black) to 1 (white), by Rec. 601 luma.
+fn mean_luma(image: &skin::Sprite) -> f64 {
+    let pixels = image.rgba.chunks_exact(4);
+    let count = pixels.len().max(1) as f64;
+    let sum: f64 = pixels.map(|p| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64).sum();
+    sum / count / 255.0
 }
 
 #[cfg(test)]

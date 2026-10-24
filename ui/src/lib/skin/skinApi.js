@@ -9,9 +9,11 @@ import {
 	commitVolume as limusicCommitVolume,
 	dragVolume,
 	nudgeVolume as limusicNudgeVolume,
+	auth,
 	playback
 } from '$lib/player.svelte';
 import { uiState } from './uiState.js';
+import { APP_NAME } from './brand.js';
 import { selectNone, selectOnly, trimSelection } from './selection.js';
 import { activePart } from './focus.js';
 import { playRow, searchRows, songsIn } from './searchKinds.js';
@@ -22,6 +24,7 @@ import { announceDoubleSize, doubleFactor, setScale } from './pixels.js';
 import { checkForUpdatesQuiet, QUIET_INTERVAL_MS, updateState } from '$lib/updater.svelte';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { artSize } from './render/albumArt.js';
+import { libraryWasOpen, openLibrary } from './library.js';
 
 /** @typedef {import('$lib/api').SkinPayload} SkinPayload */
 
@@ -431,14 +434,15 @@ export function saveEq() {
  * size, the time display, the analyzer. For the Winamp window, once its skin has loaded.
  */
 export async function restorePrefs() {
-	await loadPrefs();
+	// Nothing remembered: Winamp mode's first run, which gets Winamp's welcome (`queueLlama`).
+	const firstRun = Object.keys(await loadPrefs()).length === 0;
 	uiState.alwaysOnTop = pref('alwaysOnTop', false);
 	uiState.timeRemaining = pref('timeRemaining', false);
 	uiState.visMode = pref('visMode', 'analyzer');
 	uiState.vizLevels = pref('vizLevels', 'winamp');
 	Object.assign(uiState.eq, pref('eq', {}));
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
-	uiState.startInWinamp = pref('startInWinamp', false);
+	uiState.startInWinamp = pref('startInWinamp', true);
 	uiState.art.caption = pref('artCaption', false);
 	uiState.search.kind = pref('searchKind', 'songs');
 	uiState.marqueeScroll = pref('marqueeScroll', true);
@@ -450,8 +454,10 @@ export async function restorePrefs() {
 	uiState.doubleSize = pref('doubleSize', false) && (await doubleFits());
 	if (uiState.doubleSize) await applyDoubleSize();
 	/** @typedef {{ open: boolean, dock: any } | null} Placement */
+	// A first run opens Winamp's usual set, docked: the EQ and playlist, and our search.
+	const first = /** @type {Placement} */ ({ open: true, dock: 'stack' });
 	for (const kind of /** @type {const} */ (['eq', 'search', 'playlist', 'lyrics'])) {
-		const p = /** @type {Placement} */ (pref(`panel-${kind}`, null));
+		const p = /** @type {Placement} */ (pref(`panel-${kind}`, kind === 'lyrics' ? null : first));
 		if (p?.open) setPanelOpen(kind, true, p.dock);
 		else if (p) viewOf(kind).dock = p.dock;
 	}
@@ -459,6 +465,8 @@ export async function restorePrefs() {
 	if (art?.open) setArt(true, art.dock);
 	else if (art) uiState.art.dock = art.dock;
 	resizeToLayout();
+	if (libraryWasOpen()) openLibrary().catch(log('media library'));
+	if (firstRun) queueLlama(true).catch(log('llama intro'));
 }
 
 /** The queue and current track the playlist view last followed (see `followQueue`). */
@@ -831,4 +839,45 @@ export async function playResults(rows) {
 	if (first === undefined) return;
 	await playResult(first);
 	if (rest.length) await queueResults(rest, true);
+}
+
+/** Winamp's demo.mp3, from YouTube, under the name Winamp's playlist gave it (not the video's). */
+export const LLAMA_INTRO = {
+	video_id: 'HaF-nRS_CWM',
+	title: "Llama Whippin' Intro",
+	artists: 'DJ Mike Llama',
+	duration: '0:06'
+};
+
+/**
+ * The llama intro onto the queue, waiting for Play if the queue is empty: a first run's playlist,
+ * and About's "Cue the Llama". `ifEmpty`: only into an empty queue.
+ */
+export function queueLlama(ifEmpty = false) {
+	return api.winampQueueIntro(LLAMA_INTRO, ifEmpty);
+}
+
+/** The account, for the welcome's sign-in hint: the Winamp windows' start doesn't ask for it. */
+export function loadAccount() {
+	return api
+		.getAccount()
+		.then((a) => (auth.account = a))
+		.catch(() => {});
+}
+
+/**
+ * What the empty search results say (render/playlist.js draws it): a welcome, where to start,
+ * Play when something's cued (the first run's llama, then YouTube's autoplay), and signing in
+ * until there's an account.
+ * @returns {string[]}
+ */
+export function searchWelcome() {
+	return [
+		`Welcome to ${APP_NAME}!`,
+		'Type above to search YouTube Music,',
+		...(playback.now && playback.paused ? ['or just hit Play!'] : []),
+		'',
+		'Media Library: Alt+L',
+		...(auth.account?.signedIn ? [] : ['Sign in: the account button at the top', 'of the Media Library'])
+	];
 }

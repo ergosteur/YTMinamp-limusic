@@ -19,6 +19,7 @@
 	import { thumb } from '$lib/thumb';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
+	import { frameMenu, onFrame } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
@@ -448,6 +449,8 @@
 			savePref('milkdropSize', { w: window.innerWidth, h: window.innerHeight });
 		};
 		const onMenu = (/** @type {MouseEvent} */ e) => {
+			// The frame's is the player's main menu; the picture's is MilkDrop's.
+			if (!fullscreen && onFrame(e.clientX, e.clientY, window.innerWidth, window.innerHeight, inset)) return frameMenu(e);
 			e.preventDefault();
 			showMilkdropMenu(controls, { x: e.clientX, y: e.clientY }).catch((err) => console.error('menu failed', err));
 		};

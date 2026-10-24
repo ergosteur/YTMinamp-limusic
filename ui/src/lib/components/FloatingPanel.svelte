@@ -29,17 +29,18 @@
 		fileInfoForSelection,
 		flashSearch,
 		followQueue,
+		loadAccount,
 		loadSkin,
 		playIndex,
-		searchKeydown
+		searchKeydown,
+		searchWelcome
 	} from '../skin/skinApi.js';
-	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
+	import { requestMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics, lyricsEasing, lyricsFooterRect } from '../skin/render/lyrics.js';
-	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
+	import { drawLyrics, lyricsViewRect } from '../skin/render/lyrics.js';
+	import WinampLyricsView from './WinampLyricsView.svelte';
 	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { artFrame } from '../skin/render/albumArt.js';
-	import { lyricsNow, sungLine } from '../skin/lyrics.js';
 	import { attachKeys } from '../skin/keys.js';
 	import { flushPrefs, loadPrefs, pref, savePref } from '../skin/prefs.js';
 	import { cropToSelected, removeSelected } from '../skin/playlistActions.js';
@@ -59,7 +60,8 @@
 	/** The search box's "Songs ▾" button label. */
 	let kindText = $state('Songs');
 	/** Where the lyrics footer goes (render/lyrics.js keeps the strip), once drawn. */
-	let footerRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
+	let lyricsRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
+	let lyricsZoom = $state(1);
 
 	const size = () => ({ w: window.innerWidth, h: window.innerHeight });
 	/** Ask the Winamp window to dock this panel back (`'stack'`, lyrics `'right'`) or hide it (null). */
@@ -73,6 +75,8 @@
 	const onSearchKey = (/** @type {KeyboardEvent} */ e) => searchKeydown(e, searchInput, size(), () => dockTo(null));
 
 	onMount(() => {
+		// For the search welcome's sign-in hint.
+		if (kind === 'search') loadAccount();
 		// This window holds just the one panel: it's the active one whenever the window has focus.
 		setActivePart(kind);
 		// The DPI fix, then double size on top, following the Winamp window's.
@@ -128,7 +132,8 @@
 			},
 			mainX: () => 0,
 			showMenu: (target, at) => {
-				if (!target) return;
+				// The frame: the main menu, which the Winamp window has.
+				if (!target) return void requestMainMenu(at).catch((e) => console.error('menu request failed', e));
 				const shown =
 					target.kind === 'result'
 						? showResultMenu(target.index, at)
@@ -216,17 +221,16 @@
 				followQueue(listRows('playlist', { w, h }).rows);
 				drawPlaylist(ctx, sprites, pledit, playback.queue, uiState.pl, 0, { w, h });
 			} else if (kind === 'search') {
-				drawSearch(ctx, sprites, pledit, uiState.search, 0, { w, h });
+				drawSearch(ctx, sprites, pledit, uiState.search, 0, { w, h }, searchWelcome());
 			} else if (kind === 'eq') {
 				drawEqualizer(ctx, sprites, uiState.eq, 0);
 			} else {
-				const state = lyricsNow();
-				const sung = state.lyrics ? sungLine(state.lyrics) : -1;
-				drawLyrics(ctx, sprites, pledit, state, sung, uiState.lyrics.nudge, { x: 0, y: 0, w, h }, uiState.lyrics.closePressed, uiState.lyrics.zoom);
-				const r = lyricsFooterRect(sprites, { x: 0, y: 0, w, h });
-				if (!footerRect || r.x !== footerRect.x || r.y !== footerRect.y || r.w !== footerRect.w) footerRect = r;
+				drawLyrics(ctx, sprites, pledit, { x: 0, y: 0, w, h }, uiState.lyrics.closePressed);
+				const r = lyricsViewRect(sprites, { x: 0, y: 0, w, h });
+				if (!lyricsRect || r.x !== lyricsRect.x || r.y !== lyricsRect.y || r.w !== lyricsRect.w || r.h !== lyricsRect.h) lyricsRect = r;
+				if (uiState.lyrics.zoom !== lyricsZoom) lyricsZoom = uiState.lyrics.zoom;
 			}
-		}, lyricsEasing);
+		});
 
 		return () => {
 			unlistenDouble.then((f) => f());
@@ -284,7 +288,7 @@
 			}}>{kindText} ▾</button
 		>
 	{/if}
-	{#if kind === 'lyrics' && footerRect}
-		<WinampLyricsFooter rect={footerRect} {pledit} />
+	{#if kind === 'lyrics' && lyricsRect}
+		<WinampLyricsView rect={lyricsRect} {pledit} zoom={lyricsZoom} onmenu={(at) => showLyricsMenu(at).catch((e) => console.error('menu failed', e))} />
 	{/if}
 </div>

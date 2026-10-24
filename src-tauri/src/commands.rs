@@ -851,14 +851,37 @@ pub async fn winamp_popup_menu(
     items: Vec<crate::winamp::MenuEntry>,
     x: f64,
     y: f64,
+    on: Option<String>,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    return crate::winamp::popup_menu(&app, window.label().to_owned(), items, x, y);
+    return crate::winamp::popup_menu(&app, window.label().to_owned(), on, items, x, y);
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (app, window, items, x, y);
+        let _ = (app, window, items, x, y, on);
         Err("not on this platform".into())
     }
+}
+
+/// Winamp mode's llama intro (a first run's playlist, About's "Cue the Llama"): `item` onto the
+/// queue. Into an empty queue it goes paused, as a saved queue comes back at launch
+/// (`restore_queue`), so it waits for Play like Winamp's own demo.mp3; an ordinary add would
+/// start it. Behind anything already queued it's an ordinary add, unless `if_empty` (the first
+/// run's: someone coming from Limusic's window keeps their queue as it was).
+#[tauri::command]
+pub async fn winamp_queue_intro(state: St<'_>, item: SongItem, if_empty: bool) -> Result<(), String> {
+    let state = state.inner().clone();
+    let queue = state.queue_snapshot().await;
+    if queue["items"].as_array().map_or(false, |items| !items.is_empty()) {
+        if !if_empty {
+            state.add_to_queue(vec![item], None, None).await;
+        }
+        return Ok(());
+    }
+    let saved = serde_json::json!({ "items": [item], "current": 0, "repeat": queue["repeat"] });
+    state.db.set_setting("queue_json", &saved.to_string());
+    state.db.set_setting("queue_position", "0");
+    state.restore_queue().await;
+    Ok(())
 }
 
 /// Float a Winamp panel (`art`, `playlist`, `search`) in its own window. Same main-thread hop as

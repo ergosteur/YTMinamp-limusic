@@ -10,7 +10,6 @@
 	// Ctrl+=/-/0, Ctrl+wheel, a pinch), the window growing with it, remembered.
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { closeWinampPanel, getAlbum, openExternal, resizeWinampPanel } from '$lib/api';
 	import { copyText } from '$lib/clipboard';
 	import { logUi } from '$lib/errlog';
@@ -20,16 +19,18 @@
 	import { doubleFactor, followDoubleSize, onPinch, pinOneToOnePixels } from '../skin/pixels.js';
 	import { showFileInfoMenu } from '../skin/menu.js';
 	import { FILE_INFO_KEY, FILE_INFO_SIZE, loadSkin } from '../skin/skinApi.js';
+	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { inSongLibrary, ratingOf, songLibraryToken, toggleRating, toggleSongLibrary } from '$lib/player.svelte';
-	import { openInLimusic } from '../skin/navigate.js';
+	import { openLibrary } from '../skin/library.js';
 	import { loadPrefs, pref, savePref } from '../skin/prefs.js';
 
 	const COVER = 150;
 	/** Text sizes, as multiples of the 11px it starts at. */
 	const ZOOMS = [1, 1.25, 1.5, 1.75, 2];
 	let zoom = $state(1);
-	const size = $derived({ w: Math.round(FILE_INFO_SIZE.w * zoom), h: Math.round(FILE_INFO_SIZE.h * zoom) });
+	/** The window's size: zoomed with the text, then whatever its edges are dragged to. */
+	let size = $state({ w: FILE_INFO_SIZE.w, h: FILE_INFO_SIZE.h });
 	const px = (/** @type {number} */ n) => Math.round(n * zoom);
 
 	/**
@@ -148,9 +149,15 @@
 		fit();
 	}
 
-	/** The window to the zoomed size, and the frame redrawn at it. */
+	/** The window to the zoomed size; the frame is redrawn when it gets there (`onResize`). */
 	function fit() {
-		resizeWinampPanel('fileinfo', size.w * doubleFactor(), size.h * doubleFactor()).catch((e) => console.error('file info resize failed', e));
+		const [w, h] = [FILE_INFO_SIZE.w * zoom, FILE_INFO_SIZE.h * zoom].map((n) => Math.round(n) * doubleFactor());
+		resizeWinampPanel('fileinfo', w, h).catch((e) => console.error('file info resize failed', e));
+	}
+
+	/** The window resized, by `fit` or from its edges: the frame redrawn to fill it. */
+	function onResize() {
+		size = { w: window.innerWidth, h: window.innerHeight };
 		draw();
 	}
 
@@ -187,6 +194,7 @@
 		window.addEventListener('storage', onStorage);
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
+		window.addEventListener('resize', onResize);
 		// The DPI fix, then double size on top, following the Winamp window's.
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `file info zoom pin failed: ${e}`)),
@@ -218,31 +226,16 @@
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 
-		/** A titlebar press becomes a window drag once the mouse moves. */
-		let press = /** @type {{ x: number, y: number } | null} */ (null);
-		const onDown = (/** @type {MouseEvent} */ e) => {
-			if (e.button !== 0) return;
-			if (onCloseButton(e, size.w)) {
-				closePressed = true;
+		const stopFrameMouse = frameMouse(canvas, {
+			onClose: (e) => onCloseButton(e, size.w),
+			inset: () => inset,
+			pressed: (down) => {
+				closePressed = down;
 				draw();
-			} else if (e.clientY < inset.top) {
-				press = { x: e.screenX, y: e.screenY };
-			}
-		};
-		const onMove = (/** @type {MouseEvent} */ e) => {
-			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
-				press = null;
-				getCurrentWindow().startDragging();
-			}
-		};
-		const onUp = (/** @type {MouseEvent} */ e) => {
-			press = null;
-			if (!closePressed) return;
-			closePressed = false;
-			// Released off the button: no close, as in Winamp.
-			if (onCloseButton(e, size.w)) close();
-			else draw();
-		};
+			},
+			close,
+			resizable: true
+		});
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
 			if (e.key === 'Escape') return close();
 			if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -266,18 +259,15 @@
 			);
 		};
 		window.addEventListener('contextmenu', onMenu);
-		canvas.addEventListener('mousedown', onDown);
-		window.addEventListener('mousemove', onMove);
-		window.addEventListener('mouseup', onUp);
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('storage', onStorage);
+			window.removeEventListener('resize', onResize);
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
-			window.removeEventListener('mousemove', onMove);
-			window.removeEventListener('mouseup', onUp);
+			stopFrameMouse();
 			window.removeEventListener('keydown', onKey);
 			window.removeEventListener('wheel', onWheel);
 			window.removeEventListener('contextmenu', onMenu);
@@ -322,7 +312,7 @@
 											type="button"
 											class="cursor-pointer text-left hover:underline"
 											title="Open in Limusic"
-											onclick={() => openInLimusic(links[label]).catch((e) => (note = `Couldn't open it: ${e}`))}
+											onclick={() => openLibrary(links[label]).catch((e) => (note = `Couldn't open it: ${e}`))}
 											>{value}</button
 										>
 									{:else}{value}{/if}

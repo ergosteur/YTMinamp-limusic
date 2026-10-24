@@ -7,18 +7,17 @@
 	import { onMount } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { closeWinampPanel, openExternal } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
-	import { ABOUT_SIZE, loadSkin } from '../skin/skinApi.js';
+	import { flashMarquee, loadSkin, queueLlama } from '../skin/skinApi.js';
+	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { APP_NAME, fullVersion } from '../skin/brand.js';
 	import { checkForUpdatesInteractive, openDownloadPage, updateState } from '$lib/updater.svelte';
 
-	const { w: WIDTH, h: HEIGHT } = ABOUT_SIZE;
 
 	/** @type {HTMLCanvasElement} */
 	let canvas;
@@ -45,18 +44,24 @@
 	const font = $derived(`${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`);
 	/** The notices as text and links, the links opened in the browser. */
 	const noticeParts = $derived(notices.split(/(https?:\/\/[^\s)]+)/));
+	const cueTheLlama = () =>
+		queueLlama()
+			.then(() => flashMarquee('The llama is cued up'))
+			.catch((e) => console.error('queueing the llama failed', e));
 	const open = (/** @type {string} */ url) => openExternal(url).catch((e) => console.error('open link failed', e));
 
 	function draw() {
 		const ctx = canvas?.getContext('2d');
 		if (!ctx || sprites.size === 0) return;
-		canvas.width = WIDTH;
-		canvas.height = HEIGHT;
-		canvas.style.width = `${WIDTH}px`;
-		canvas.style.height = `${HEIGHT}px`;
+		// As big as the window, which opens at ABOUT_SIZE and resizes from its edges.
+		const [w, h] = [window.innerWidth, window.innerHeight];
+		canvas.width = w;
+		canvas.height = h;
+		canvas.style.width = `${w}px`;
+		canvas.style.height = `${h}px`;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
-		ctx.fillRect(0, 0, WIDTH, HEIGHT);
-		drawFrame(ctx, sprites, { x: 0, y: 0, w: WIDTH, h: HEIGHT }, closePressed, 'about', isLit('about'));
+		ctx.fillRect(0, 0, w, h);
+		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'about', isLit('about'));
 	}
 
 	onMount(() => {
@@ -68,6 +73,7 @@
 			.catch((e) => (notices = `Couldn’t read the notices (${e}).`));
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
+		window.addEventListener('resize', draw);
 		// The DPI fix, then double size on top, following the Winamp window's.
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `about zoom pin failed: ${e}`)),
@@ -92,49 +98,31 @@
 		reload();
 		const unlistenSkin = listen('winamp-skin-changed', reload);
 
-		/** A titlebar press becomes a window drag once the mouse moves. */
-		let press = /** @type {{ x: number, y: number } | null} */ (null);
 		const onClose = (/** @type {MouseEvent} */ e) => {
-			const x = WIDTH + ART_CLOSE.dx;
+			const x = window.innerWidth + ART_CLOSE.dx;
 			return e.clientX >= x && e.clientX < x + ART_CLOSE.w && e.clientY >= ART_CLOSE.y && e.clientY < ART_CLOSE.y + ART_CLOSE.h;
 		};
-		const onDown = (/** @type {MouseEvent} */ e) => {
-			if (e.button !== 0) return;
-			if (onClose(e)) {
-				closePressed = true;
+		const stopFrameMouse = frameMouse(canvas, {
+			onClose,
+			inset: () => inset,
+			pressed: (down) => {
+				closePressed = down;
 				draw();
-			} else if (e.clientY < inset.top) {
-				press = { x: e.screenX, y: e.screenY };
-			}
-		};
-		const onMove = (/** @type {MouseEvent} */ e) => {
-			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
-				press = null;
-				getCurrentWindow().startDragging();
-			}
-		};
-		const onUp = (/** @type {MouseEvent} */ e) => {
-			press = null;
-			if (!closePressed) return;
-			closePressed = false;
-			// Released off the button: no close, as in Winamp.
-			if (onClose(e)) close();
-			else draw();
-		};
+			},
+			close,
+			resizable: true
+		});
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
 			if (e.key === 'Escape') close();
 		};
-		canvas.addEventListener('mousedown', onDown);
-		window.addEventListener('mousemove', onMove);
-		window.addEventListener('mouseup', onUp);
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
 			unlistenSkin.then((f) => f());
+			window.removeEventListener('resize', draw);
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
-			window.removeEventListener('mousemove', onMove);
-			window.removeEventListener('mouseup', onUp);
+			stopFrameMouse();
 			window.removeEventListener('keydown', onKey);
 		};
 	});
@@ -204,6 +192,9 @@
 						{@render button('Download', openDownloadPage)}
 					{/if}
 					<span class:opacity-80={!update.error}>{update.message}</span>
+					<!-- Winamp's welcome, again: the llama intro onto the playlist, waiting for Play. -->
+					<span class="basis-full"></span>
+					{@render button('Cue the Llama', cueTheLlama)}
 				</div>
 			{:else}
 				<pre class="whitespace-pre-wrap" style:font-family={font}>{#each noticeParts as part, i (i)}{#if i % 2}<button

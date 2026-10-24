@@ -182,8 +182,9 @@ export function drawPlaylist(ctx, sprites, pledit, queue, view, oy, size = DOCKE
  * @param {{ results: {title: string, artists: string, duration?: string}[], status: string } & PanelView} search
  * @param {number} oy
  * @param {Size} [size]
+ * @param {string[]} [welcome] lines for empty results, the first in the current-track colour
  */
-export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED) {
+export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED, welcome = []) {
 	drawListPanel(ctx, sprites, pledit, {
 		kind: 'search',
 		items: search.results,
@@ -195,7 +196,8 @@ export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED) {
 			const n = search.results.filter((r) => /** @type {{ rowKind?: string }} */ (r).rowKind !== 'header').length;
 			return n ? `${n} results` : '';
 		})(),
-		status: search.status
+		status: search.status,
+		welcome: search.results.length ? [] : welcome
 	});
 }
 
@@ -203,9 +205,9 @@ export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
  * @param {PleditColours} pledit
- * @param {{ kind: 'search' | 'playlist', items: {title: string, artists: string, duration?: string}[], current: number, view: PanelView, oy: number, size: Size, footer: string, status: string }} panel
+ * @param {{ kind: 'search' | 'playlist', items: {title: string, artists: string, duration?: string}[], current: number, view: PanelView, oy: number, size: Size, footer: string, status: string, welcome?: string[] }} panel
  */
-function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, size, footer, status }) {
+function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, size, footer, status, welcome = [] }) {
 	const sheet = sprites.get('pledit');
 	if (!sheet) return;
 	const text = sprites.get('text');
@@ -270,6 +272,12 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 		ctx.fillStyle = pledit.normal ?? '#00ff00';
 		ctx.textAlign = 'left';
 		ctx.fillText(status, LIST.x + 2, oy + area.y + ROW_H / 2);
+	} else {
+		ctx.textAlign = 'left';
+		welcome.forEach((line, row) => {
+			ctx.fillStyle = row === 0 ? (pledit.current ?? '#ffffff') : (pledit.normal ?? '#00ff00');
+			ctx.fillText(line, LIST.x + 2, oy + area.y + row * ROW_H + ROW_H / 2);
+		});
 	}
 	// Rows are numbered past any headers above (an "All" search's sections).
 	let headersAbove = 0;

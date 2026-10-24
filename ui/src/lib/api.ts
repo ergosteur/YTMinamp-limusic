@@ -587,11 +587,16 @@ export interface WinampMenuEntry {
 	accel?: string;
 }
 /** Pop up the Winamp menu without blocking; picks arrive as `winamp-menu` events with the id.
- *  Rejects off Linux, where the caller uses Tauri's menu API instead. */
-export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number) =>
-	invoke<void>('winamp_popup_menu', { items, x, y });
+ *  Over window `on` if given, else this one. Rejects off Linux, where the caller uses Tauri's
+ *  menu API instead. */
+export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number, on?: string) =>
+	invoke<void>('winamp_popup_menu', { items, x, y, on });
+/** Winamp mode's llama intro onto the queue: paused into an empty one, else added unless
+ *  `ifEmpty` (commands.rs). */
+export const winampQueueIntro = (item: SongItem, ifEmpty: boolean) =>
+	invoke<void>('winamp_queue_intro', { item, ifEmpty });
 /** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
-export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update';
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'library';
 /** Float a panel in its own window, or bring that window back if it's up. */
 export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
 	invoke<void>('open_winamp_panel', { kind, width, height });
@@ -639,6 +644,31 @@ export interface SkinPayload {
 		mbFg?: string;
 		font?: string;
 	};
+	/** genex.bmp's colours (the Media Library's); none leaves the library in Limusic's theme. */
+	genex: SkinGenex | null;
+	/** Whether main.bmp is mostly dark: the library's Limusic theme then is too. */
+	mainDark: boolean;
+}
+/** winamp.rs / skin crate `Genex`: `#rrggbb` each. */
+export interface SkinGenex {
+	itemBg: string;
+	itemFg: string;
+	windowBg: string;
+	buttonText: string;
+	windowText: string;
+	divider: string;
+	selection: string;
+	headerBg: string;
+	headerText: string;
+	headerFrameLight: string;
+	headerFrameDark: string;
+	headerFramePressed: string;
+	headerDeadArea: string;
+	scrollbar: string;
+	scrollbar2: string;
+	scrollbarPressed: string;
+	scrollbarPressed2: string;
+	scrollbarDeadArea: string;
 }
 
 // --- browse / library (context/08) ---------------------------------------------------------

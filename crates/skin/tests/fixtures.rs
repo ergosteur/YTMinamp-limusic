@@ -121,3 +121,14 @@ fn pledit_optional_keys_are_actually_optional() {
         assert!(skin.pledit.mb_bg.is_none(), "{name} has no mbBG");
     }
 }
+
+/// The Media Library window's colours come from here when a skin has no genex.bmp of its own.
+#[test]
+fn base_skins_genex_colours() {
+    let genex = skin::genex_colors(base().sprite("genex").unwrap()).unwrap();
+    assert_eq!(genex.item_bg, "#000000");
+    assert_eq!(genex.item_fg, "#00ff00");
+    assert_eq!(genex.window_bg, "#383757");
+    assert_eq!(genex.selection, "#0000c6");
+    assert_eq!(genex.header_bg, "#484878");
+}
