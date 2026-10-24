@@ -130,6 +130,21 @@ export function maxScroll(count, visible = VISIBLE_ROWS) {
 /** @typedef {import('$lib/api').SkinPayload['pledit']} PleditColours */
 /** @typedef {{ scroll: number, selected: number | null, marked: Set<number>, pressed: string | null, draggingScroll: boolean }} PanelView */
 
+/** The queue last added up: its items, and the seconds before each (the total last). Kept by
+ * item, not by array: Limusic patches the playing row in place when its duration arrives. */
+let running = { items: /** @type {object[]} */ ([]), times: new Float64Array(1) };
+
+/** @param {{ duration?: string }[]} items @returns {Float64Array} */
+function runningTimes(items) {
+	const same = running.items.length === items.length && items.every((item, i) => item === running.items[i]);
+	if (!same) {
+		const times = new Float64Array(items.length + 1);
+		items.forEach((item, i) => (times[i + 1] = times[i] + seconds(item.duration)));
+		running = { items: [...items], times };
+	}
+	return running.times;
+}
+
 /**
  * The playlist editor.
  * @param {CanvasRenderingContext2D} ctx
@@ -143,8 +158,9 @@ export function maxScroll(count, visible = VISIBLE_ROWS) {
 export function drawPlaylist(ctx, sprites, pledit, queue, view, oy, size = DOCKED) {
 	const items = queue.items ?? [];
 	// Running time ("selected/total" in Winamp; here: current track's position in the total).
-	const total = items.reduce((sum, item) => sum + seconds(item.duration), 0);
-	const done = items.slice(0, Math.max(0, queue.currentIndex)).reduce((sum, item) => sum + seconds(item.duration), 0);
+	const before = runningTimes(items);
+	const total = before[items.length];
+	const done = before[Math.min(items.length, Math.max(0, queue.currentIndex))];
 	drawListPanel(ctx, sprites, pledit, {
 		kind: 'playlist',
 		items,
@@ -255,6 +271,9 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 		ctx.textAlign = 'left';
 		ctx.fillText(status, LIST.x + 2, oy + area.y + ROW_H / 2);
 	}
+	// Rows are numbered past any headers above (an "All" search's sections).
+	let headersAbove = 0;
+	for (let h = 0; h < Math.min(view.scroll, items.length); h++) if (/** @type {{ rowKind?: string }} */ (items[h]).rowKind === 'header') headersAbove++;
 	for (let row = 0; !status && row < area.rows + 1; row++) {
 		const i = view.scroll + row;
 		if (i >= items.length) break;
@@ -269,6 +288,7 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 			ctx.fillStyle = pledit.current ?? '#ffffff';
 			ctx.textAlign = 'left';
 			ctx.fillText(item.title.toUpperCase(), LIST.x + 2, y + ROW_H / 2);
+			headersAbove++;
 			continue;
 		}
 		ctx.fillStyle = (i === current ? pledit.current : pledit.normal) ?? '#00ff00';
@@ -277,9 +297,8 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 		ctx.textAlign = 'right';
 		ctx.fillText(duration, LIST.x + LIST.w - 3, y + ROW_H / 2);
 		ctx.textAlign = 'left';
-		// Numbered past any headers above; an album, artist or playlist reads "Title — subtitle".
-		let n = i + 1;
-		for (let h = 0; h < i; h++) if (/** @type {{ rowKind?: string }} */ (items[h]).rowKind === 'header') n--;
+		// An album, artist or playlist reads "Title — subtitle".
+		const n = i + 1 - headersAbove;
 		const text = item.browse
 			? `${item.title}${item.artists ? ` — ${item.artists}` : ''}`
 			: `${item.artists ? `${item.artists} - ` : ''}${item.title}`;

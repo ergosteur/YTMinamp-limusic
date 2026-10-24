@@ -33,7 +33,7 @@ export function drawTitle(ctx, title, nowMs, pledit, scroll = true) {
   // frame it in a box there) and clipped a little above and below it, well clear of the
   // kbps/kHz row at y 43.
   const top = MARQUEE_POS.y - 2;
-  const h = MARQUEE_POS.h + 7;
+  const h = MARQUEE_POS.h + 8;
   ctx.save();
   ctx.beginPath();
   ctx.rect(MARQUEE_POS.x, top, MARQUEE_POS.w, h);
@@ -42,8 +42,8 @@ export function drawTitle(ctx, title, nowMs, pledit, scroll = true) {
   ctx.fillStyle = pledit.normal ?? "#00ff00";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  // Centred on the bitmap row, a hair low so capitals sit in it rather than over its top.
-  const y = MARQUEE_POS.y + MARQUEE_POS.h / 2 + 1;
+  // Centred on the bitmap row, two pixels low so capitals sit in it rather than over its top.
+  const y = MARQUEE_POS.y + MARQUEE_POS.h / 2 + 2;
   const width = ctx.measureText(title).width;
   if (width <= MARQUEE_POS.w || !scroll) {
     ctx.fillText(title, MARQUEE_POS.x, y);

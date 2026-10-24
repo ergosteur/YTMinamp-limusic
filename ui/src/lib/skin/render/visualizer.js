@@ -30,24 +30,34 @@ const DEFAULT_COLORS = [
 	[150, 150, 150]
 ];
 
-/** CSS colour strings for all 24 slots, skin first, stock palette for anything missing. */
+/** The 24 slots as RGBA pixels, skin first, stock palette for anything missing; kept for the
+ * skin's palette last asked for, so a frame makes none. */
+let paletteFor = /** @type {unknown} */ (undefined);
+const pixels = new Uint32Array(24);
 function palette(colors) {
-	return DEFAULT_COLORS.map((d, i) => {
+	if (colors === paletteFor) return pixels;
+	paletteFor = colors;
+	const bytes = new Uint8Array(pixels.buffer);
+	DEFAULT_COLORS.forEach((d, i) => {
 		const c = colors?.[i] ?? d;
-		return `rgb(${c[0]},${c[1]},${c[2]})`;
+		bytes.set([c[0], c[1], c[2], 255], i * 4);
 	});
+	return pixels;
 }
 
-/** Dotted background: colour 0, with colour 1 on every other pixel of every other row. */
-function drawBackground(ctx, colors) {
-	ctx.fillStyle = colors[0];
-	ctx.fillRect(VIS_POS.x, VIS_POS.y, VIS_POS.w, VIS_POS.h);
-	ctx.fillStyle = colors[1];
-	for (let x = 0; x < VIS_POS.w; x += 2) {
-		for (let y = 1; y < VIS_POS.h; y += 2) {
-			ctx.fillRect(VIS_POS.x + x, VIS_POS.y + y, 1, 1);
-		}
-	}
+/** The analyzer box, drawn a pixel at a time into `image` and put on the canvas in one go. */
+let box = /** @type {HTMLCanvasElement | null} */ (null);
+let image = /** @type {ImageData | null} */ (null);
+
+/**
+ * The analyzer changes next frame: there's sound, or bars and peaks are still falling. Otherwise
+ * every frame of silence draws the same thing.
+ * @param {ArrayLike<number> | null} columns as for `drawAnalyzer`
+ */
+export function analyzerMoving(columns) {
+	if (columns) for (let x = 0; x < 75; x++) if (columns[x] > 0) return true;
+	for (let x = 0; x < 75; x++) if (saFalloff[x] > 0 || saPeaks[x] > 0) return true;
+	return false;
 }
 
 /**
@@ -60,13 +70,22 @@ export function drawAnalyzer(ctx, skinColors, columns) {
 	sample.fill(0);
 	if (columns) sample.set(Array.prototype.slice.call(columns, 0, 75));
 
-	ctx.save();
-	ctx.beginPath();
-	ctx.rect(VIS_POS.x, VIS_POS.y, VIS_POS.w, VIS_POS.h);
-	ctx.clip();
-	drawBackground(ctx, colors);
+	const { w, h } = VIS_POS;
+	if (!box || !image) {
+		box = document.createElement('canvas');
+		box.width = w;
+		box.height = h;
+		image = new ImageData(w, h);
+	}
+	const px = new Uint32Array(image.data.buffer);
+	// Dotted background: colour 0, with colour 1 on every other pixel of every other row.
+	for (let y = 0; y < h; y++) {
+		for (let x = 0; x < w; x++) px[y * w + x] = y % 2 === 1 && x % 2 === 0 ? colors[1] : colors[0];
+	}
+	const put = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ c) => {
+		if (y >= 0 && y < h) px[y * w + x] = c;
+	};
 
-	const h = VIS_POS.h;
 	for (let x = 0; x < 75; x++) {
 		const chunk = x & ~3;
 		saData[x] = (sample[chunk] + sample[chunk + 1] + sample[chunk + 2] + sample[chunk + 3]) / 4;
@@ -92,12 +111,10 @@ export function drawAnalyzer(ctx, skinColors, columns) {
 		const barHeight = Math.round(saFalloff[x]) - PUSH_DOWN;
 		for (let y = h - barHeight; y < h; y++) {
 			// Row y takes colour y: viscolor 2..17 is the gradient, shifted by PUSH_DOWN.
-			ctx.fillStyle = colors[2 - PUSH_DOWN + y];
-			ctx.fillRect(VIS_POS.x + x, VIS_POS.y + y, 1, 1);
+			put(x, y, colors[2 - PUSH_DOWN + y]);
 		}
-		const peakY = h - (barPeak[x] + 1 - PUSH_DOWN);
-		ctx.fillStyle = colors[PEAK_COLOR];
-		ctx.fillRect(VIS_POS.x + x, VIS_POS.y + peakY, 1, 1);
+		put(x, h - (barPeak[x] + 1 - PUSH_DOWN), colors[PEAK_COLOR]);
 	}
-	ctx.restore();
+	/** @type {CanvasRenderingContext2D} */ (box.getContext('2d')).putImageData(image, 0, 0);
+	ctx.drawImage(box, VIS_POS.x, VIS_POS.y);
 }

@@ -64,16 +64,29 @@ export async function searchRows(kind, query) {
 	if (kind === 'songs') return (await api.search(query, true)).map((s) => ({ ...s, rowKind: 'song' }));
 	if (kind === 'videos') return (await api.searchVideos(query)).map((s) => ({ ...s, rowKind: 'song' }));
 	if (kind !== 'all') return (await api.searchCards(query, kind)).map(rowOf);
-	const all = await api.searchAll(query, true);
-	/** @type {[string, api.BrowseItem[]][]} */
+	// As Limusic's search page does it: songs and videos from their own filtered searches, whose
+	// rows always carry the artist and length. The unfiltered response's song rows mix in videos
+	// and podcast episodes and drop one of the two; they're only the fallback. Only the search
+	// asked for goes into the account's history (#203).
+	const [all, songs, videos] = await Promise.all([
+		api.searchAll(query, true),
+		api.search(query, false).catch(() => /** @type {api.SongItem[]} */ ([])),
+		api.searchVideos(query).catch(() => /** @type {api.SongItem[]} */ ([]))
+	]);
+	/** @param {api.SongItem} s @returns {SearchRow} */
+	const song = (s) => ({ ...s, rowKind: 'song' });
+	/** @type {[string, SearchRow[]][]} */
 	const sections = [
-		['Top result', byTopArtist(all.top)],
-		['Songs', all.songs],
-		['Albums', all.albums],
-		['Artists', all.artists],
-		['Playlists', all.playlists]
+		['Top result', byTopArtist(all.top).map(rowOf)],
+		// Every song (Limusic's All tab stops at five); four videos, as Limusic's does, so the
+		// playlists aren't buried. The Videos kind has the rest.
+		['Songs', songs.length ? songs.map(song) : all.songs.map(rowOf)],
+		['Albums', all.albums.map(rowOf)],
+		['Artists', all.artists.map(rowOf)],
+		['Videos', videos.slice(0, 4).map(song)],
+		['Playlists', all.playlists.map(rowOf)]
 	];
-	return sections.filter(([, items]) => items.length).flatMap(([title, items]) => [header(title), ...items.map(rowOf)]);
+	return sections.filter(([, rows]) => rows.length).flatMap(([title, rows]) => [header(title), ...rows]);
 }
 
 /**

@@ -16,6 +16,7 @@
 	import { ABOUT_SIZE, loadSkin } from '../skin/skinApi.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
 	import { APP_NAME, fullVersion } from '../skin/brand.js';
+	import { checkForUpdatesInteractive, openDownloadPage, updateState } from '$lib/updater.svelte';
 
 	const { w: WIDTH, h: HEIGHT } = ABOUT_SIZE;
 
@@ -29,6 +30,15 @@
 	let tab = $state(/** @type {'about' | 'notices'} */ ('about'));
 	let version = $state('');
 	let notices = $state('');
+	/** Check for updates: its answer, or '' before the first check. */
+	let update = $state({ checking: false, message: '', error: false });
+
+	/** Limusic's own check (`updater.svelte.ts`), which reads YTMinamp's releases (skin/updates.js). */
+	async function checkUpdates() {
+		update = { checking: true, message: 'Checking\u2026', error: false };
+		const { message, error } = await checkForUpdatesInteractive();
+		update = { checking: false, message, error };
+	}
 	let closePressed = false;
 
 	const close = () => closeWinampPanel('about').catch((e) => console.error('close failed', e));
@@ -175,6 +185,26 @@
 						>
 					{/each}
 				</p>
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					{#snippet button(/** @type {string} */ text, /** @type {() => void} */ action, disabled = false)}
+						<button
+							type="button"
+							class="border px-1.5 text-[11px] leading-[15px] disabled:opacity-50"
+							style:background={pledit.normalBg ?? '#000000'}
+							style:color={pledit.current ?? '#ffffff'}
+							style:border-color={pledit.normal ?? '#00ff00'}
+							style:font-family={font}
+							{disabled}
+							onclick={action}>{text}</button
+						>
+					{/snippet}
+					{@render button('Check for updates', checkUpdates, update.checking)}
+					<!-- A newer build: unsigned, so it's the release page, never an in-place install. -->
+					{#if updateState.available && !updateState.available.rollback}
+						{@render button('Download', openDownloadPage)}
+					{/if}
+					<span class:opacity-80={!update.error}>{update.message}</span>
+				</div>
 			{:else}
 				<pre class="whitespace-pre-wrap" style:font-family={font}>{#each noticeParts as part, i (i)}{#if i % 2}<button
 								type="button"

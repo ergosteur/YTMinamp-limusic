@@ -19,6 +19,7 @@ import { PL_H, PL_W, VISIBLE_ROWS, listRows, maxScroll } from './render/playlist
 import { LYRICS_W, dockedLayout } from './layout.js';
 import { EQ_H, EQ_W } from './render/equalizer.js';
 import { announceDoubleSize, doubleFactor, setScale } from './pixels.js';
+import { checkForUpdatesQuiet, QUIET_INTERVAL_MS, updateState } from '$lib/updater.svelte';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { artSize } from './render/albumArt.js';
 
@@ -37,16 +38,58 @@ export function selectSkin(/** @type {string | null} */ path) {
 /**
  * Show `text` in the title marquee for a couple of seconds, like Winamp 5 does when a mode
  * changes ("Shuffle: On").
- * @param {string} text
+ * @param {string} text @param {number} [ms]
  */
-export function flashMarquee(text) {
+export function flashMarquee(text, ms = 2000) {
 	// A floating panel has no marquee of its own: the Winamp window shows it.
 	if (getCurrentWindow().label !== 'winamp') {
 		emitTo('winamp', 'winamp-marquee', text).catch(() => {});
 		return;
 	}
 	uiState.marqueeMessage = text;
-	uiState.marqueeMessageUntil = performance.now() + 2000;
+	uiState.marqueeMessageUntil = performance.now() + ms;
+	uiState.marqueeIsUpdate = false;
+}
+
+/** The update dialog (UpdateWindow.svelte). */
+export const UPDATE_SIZE = { w: 300, h: 104 };
+export function showUpdateDialog() {
+	const f = doubleFactor();
+	api.openWinampPanel('update', UPDATE_SIZE.w * f, UPDATE_SIZE.h * f).catch(log('update dialog'));
+}
+
+/** Whether the title is showing the update message right now (a click there opens the dialog). */
+export const updateMessageShowing = () => uiState.marqueeIsUpdate && performance.now() < uiState.marqueeMessageUntil;
+
+/** How often the update message comes back while paused or stopped, and how long it stays. */
+const UPDATE_NAG_MS = 30_000;
+const UPDATE_SHOW_MS = 20_000;
+
+/**
+ * The Winamp window's update notice. Limusic's quiet check (its "update banner" setting turns it
+ * off), when the window opens and every few hours as Limusic's own window does it; a newer build
+ * flashes in the title once, then every half minute while paused or with nothing playing, never
+ * over a playing song's title. Returns the teardown.
+ */
+export function watchForUpdates() {
+	const flash = () => {
+		const a = updateState.available;
+		if (!a || a.rollback) return;
+		// Long enough for the scrolling text to come round twice, with time to click it.
+		flashMarquee(`Update available: ${a.version} (click)`, UPDATE_SHOW_MS);
+		uiState.marqueeIsUpdate = true;
+	};
+	checkForUpdatesQuiet().then(flash, log('update check'));
+	const check = setInterval(() => checkForUpdatesQuiet().catch(log('update check')), QUIET_INTERVAL_MS);
+	const nag = setInterval(() => {
+		if (playback.now && !playback.paused) return;
+		if (performance.now() < uiState.marqueeMessageUntil) return; // another message is up
+		flash();
+	}, UPDATE_NAG_MS);
+	return () => {
+		clearInterval(check);
+		clearInterval(nag);
+	};
 }
 
 const REPEAT_LABEL = { off: 'Off', all: 'All', one: 'Track' };

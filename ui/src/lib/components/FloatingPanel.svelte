@@ -35,7 +35,7 @@
 	} from '../skin/skinApi.js';
 	import { showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import { drawLyrics, lyricsEasing, lyricsFooterRect } from '../skin/render/lyrics.js';
 	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
 	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { artFrame } from '../skin/render/albumArt.js';
@@ -226,7 +226,7 @@
 				const r = lyricsFooterRect(sprites, { x: 0, y: 0, w, h });
 				if (!footerRect || r.x !== footerRect.x || r.y !== footerRect.y || r.w !== footerRect.w) footerRect = r;
 			}
-		});
+		}, lyricsEasing);
 
 		return () => {
 			unlistenDouble.then((f) => f());

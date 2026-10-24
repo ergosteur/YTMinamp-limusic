@@ -53,6 +53,7 @@
 	import EqPresetWindow from '$lib/components/EqPresetWindow.svelte';
 	import FileInfoWindow from '$lib/components/FileInfoWindow.svelte';
 	import AboutWindow from '$lib/components/AboutWindow.svelte';
+	import UpdateWindow from '$lib/components/UpdateWindow.svelte';
 	import NowPlaying from '$lib/components/NowPlaying.svelte';
 	import TheaterMode from '$lib/components/TheaterMode.svelte';
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
@@ -216,6 +217,7 @@
 	const isWinampEqSave = browser && getCurrentWindow().label === 'winamp-eqsave';
 	const isWinampFileInfo = browser && getCurrentWindow().label === 'winamp-fileinfo';
 	const isWinampAbout = browser && getCurrentWindow().label === 'winamp-about';
+	const isWinampUpdate = browser && getCurrentWindow().label === 'winamp-update';
 	const winampPanels: Record<string, 'playlist' | 'search' | 'eq' | 'lyrics'> = {
 		'winamp-playlist': 'playlist',
 		'winamp-search': 'search',
@@ -234,7 +236,7 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampFileInfo || isWinampAbout) {
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampFileInfo || isWinampAbout || isWinampUpdate) {
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
@@ -300,6 +302,8 @@
 	<FileInfoWindow />
 {:else if isWinampAbout}
 	<AboutWindow />
+{:else if isWinampUpdate}
+	<UpdateWindow />
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
 	     rounds the corners (the compositor can't round an undecorated window for us on Linux).

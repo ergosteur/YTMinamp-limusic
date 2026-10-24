@@ -15,7 +15,8 @@
     "winamp-milkdrop",
     "winamp-eqsave",
     "winamp-fileinfo",
-    "winamp-about"
+    "winamp-about",
+    "winamp-update"
   ],
   "permissions": [
     "core:default",

@@ -11,7 +11,10 @@
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
-	import { drawLyrics, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import { drawLyrics, lyricsEasing, lyricsFooterRect } from '../skin/render/lyrics.js';
+	import { analyzerMoving, drawAnalyzer } from '../skin/render/visualizer.js';
+	import { VIS_POS } from '../skin/render/sprites.js';
+	import { analyzerColumns } from '../skin/testPattern.js';
 	import WinampLyricsFooter from './WinampLyricsFooter.svelte';
 	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { lyricsNow, sungLine } from '../skin/lyrics.js';
@@ -31,6 +34,7 @@
 		SEARCH_INPUT_ID,
 		followQueue,
 		followStopAfter,
+		watchForUpdates,
 		flashMarquee,
 		loadSkin,
 		openSearch,
@@ -48,6 +52,11 @@
 
 	/** @type {HTMLCanvasElement} */
 	let canvas;
+	/** The analyzer, over main.bmp's vis box: redrawn every frame on its own (see the loops). */
+	/** @type {HTMLCanvasElement} */
+	let vizCanvas;
+	/** Where the main window starts in the canvas: art docked left pushes it right. */
+	let mainX = $state(0);
 	/** The search panel's text box: a real input, so typing, pasting and IME (Korean, ...) work. */
 	/** @type {HTMLInputElement} */
 	let searchInput;
@@ -226,13 +235,15 @@
 		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
 		const unlistenCaption = listen(ART_CAPTION_EVENT, (e) => setArtCaption(/** @type {boolean} */ (e.payload)));
 		const detachKeys = attachKeys();
+		// A newer build: in the title while paused, and first in the main menu.
+		const stopUpdateWatch = watchForUpdates();
 		// A floating playlist's ADD, and the messages floating panels show in this marquee.
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
 		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about'} */ (e.payload);
-			// The Open URL, save-preset, file info and about windows: nothing here tracks them.
-			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about') return;
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update'} */ (e.payload);
+			// The Open URL, save-preset, file info, about and update windows: nothing here tracks them.
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
 			if (view.dock === 'float') view.open = false;
@@ -253,6 +264,7 @@
 				shapedFor = shape;
 				sizeCanvas(canvas, layout.width, layout.height);
 				applyRegionClip(canvas, region, layout.mainX, layout.panels);
+				mainX = layout.mainX;
 			}
 			ctx.clearRect(0, 0, canvas.width, canvas.height);
 			// The main window and the stack draw at their own origin; docked left, art pushes them right.
@@ -320,10 +332,22 @@
 				ctx.restore();
 			}
 			placeSearchInput(searchPanel ?? null);
-		});
+		}, lyricsEasing);
+		const stopVizLoop = startRenderLoop(
+			(nowMs) => {
+				const on = uiState.visMode === 'analyzer' && sprites.size > 0;
+				vizCanvas.style.display = on ? 'block' : 'none';
+				const ctx = vizCanvas.getContext('2d');
+				if (!on || !ctx) return;
+				ctx.setTransform(1, 0, 0, 1, -VIS_POS.x, -VIS_POS.y);
+				drawAnalyzer(ctx, viscolor, analyzerColumns(nowMs));
+			},
+			(nowMs) => uiState.visMode === 'analyzer' && analyzerMoving(analyzerColumns(nowMs))
+		);
 
 		return () => {
 			stopLoop();
+			stopVizLoop();
 			clearInterval(audioTimer);
 			unlistenViz.then((f) => f());
 			unlistenDock.then((f) => f());
@@ -335,12 +359,24 @@
 			unlistenZoom.then((f) => f());
 			unlistenCaption.then((f) => f());
 			detachKeys();
+			stopUpdateWatch();
 		};
 	});
 </script>
 
 <div class="relative h-screen w-screen overflow-hidden bg-transparent">
 	<canvas bind:this={canvas} class="block"></canvas>
+	<canvas
+		bind:this={vizCanvas}
+		class="pointer-events-none absolute"
+		width={VIS_POS.w}
+		height={VIS_POS.h}
+		style:left="{mainX + VIS_POS.x}px"
+		style:top="{VIS_POS.y}px"
+		style:width="{VIS_POS.w}px"
+		style:height="{VIS_POS.h}px"
+		style:image-rendering="pixelated"
+	></canvas>
 	<input
 		bind:this={searchInput}
 		id={SEARCH_INPUT_ID}

@@ -88,6 +88,8 @@ const LEAD: Duration = Duration::from_millis(200);
 const FRAME: Duration = Duration::from_millis(16);
 /// No new levels for this long: nothing's playing (paused, between tracks).
 const STALE: Duration = Duration::from_millis(150);
+/// How often silence is resent: well inside the page's 500 ms before it calls the feed gone.
+const SILENCE_HEARTBEAT: Duration = Duration::from_millis(200);
 const WAVE_LEN: usize = 1024;
 const WAVE_RATE: f64 = 44_100.0;
 
@@ -295,6 +297,8 @@ fn run(app: &AppHandle) {
     let mut phases = vec![0.0; BANDS.len()];
     let mut last_frame = Instant::now();
     let mut last_eq = Instant::now();
+    let mut sent_silence = false;
+    let mut last_emit = Instant::now();
     loop {
         std::thread::sleep(FRAME);
         let now = Instant::now();
@@ -325,7 +329,14 @@ fn run(app: &AppHandle) {
             shown.clone_from(&silence);
             queue.clear();
         }
-        let _ = app.emit_to(crate::winamp::LABEL, EVENT, columns(&shown));
+        // Silence again: the bars already fell, so a heartbeat keeps the feed fresh for the page
+        // (testPattern.js), instead of sixty identical frames a second.
+        let silent = shown.iter().all(Option::is_none);
+        if !silent || !sent_silence || now.duration_since(last_emit) >= SILENCE_HEARTBEAT {
+            let _ = app.emit_to(crate::winamp::LABEL, EVENT, columns(&shown));
+            sent_silence = silent;
+            last_emit = now;
+        }
         if app.get_webview_window(MILKDROP).is_some() {
             let elapsed = now.duration_since(last_frame).as_secs_f64();
             let _ = app.emit_to(MILKDROP, WAVE_EVENT, wave(&shown, &mut phases, elapsed));

@@ -20,6 +20,8 @@ const FONT_PX = 11;
 let wrapped = { key: '', lyricsKey: '', rows: /** @type {Row[]} */ ([]) };
 /** The view's scroll, in rows, easing towards where it should be. */
 let shown = 0;
+/** When the view last drew short of its target (see `lyricsEasing`). */
+let easedAt = -Infinity;
 /** The lyrics last drawn, and a number that changes with them (see `wrapped.lyricsKey`). */
 let lyricsSeen = /** @type {object | null} */ (null);
 let lyricsId = 0;
@@ -118,6 +120,7 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 		const target = Math.max(0, Math.min(max, (sungRow >= 0 ? sungRow - visible / 2 + 0.5 : 0) + nudge));
 		shown += (target - shown) * 0.2;
 		if (Math.abs(target - shown) < 0.01) shown = target;
+		if (shown !== target) easedAt = performance.now();
 		const first = Math.floor(shown);
 		for (let r = first; r < Math.min(rows.length, first + visible + 2); r++) {
 			const y = inner.y + (r - shown) * lineH + lineH / 2;
@@ -129,6 +132,12 @@ export function drawLyrics(ctx, sprites, pledit, state, sung, nudge, at, closePr
 	}
 	ctx.restore();
 	drawFrame(ctx, sprites, at, closePressed, 'lyrics', isLit('lyrics'));
+}
+
+/** The text was still easing towards the sung line when last drawn (a closed panel's isn't): the
+ * render loop keeps drawing every frame. @param {number} nowMs */
+export function lyricsEasing(nowMs) {
+	return nowMs - easedAt < 250;
 }
 
 /**

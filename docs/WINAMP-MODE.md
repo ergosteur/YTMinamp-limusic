@@ -386,6 +386,17 @@ through `winamp-panel-dock` / `winamp-panel-toggle` events, and Rust tells it wh
 where a floating window opens. Search results don't carry over between docked and floating.
 Code: `ui/src/lib/components/AlbumArtWindow.svelte`, `FloatingListPanel.svelte`.
 
+## Updates
+
+Limusic's update check reads YTMinamp's own GitHub releases (`ui/src/lib/skin/updates.js`, full
+releases only; builds aren't signed, so it only ever offers the download page). Limusic's window
+shows its banner; in Winamp mode, the Winamp window runs the same check when it opens and every six
+hours (`watchForUpdates` in `skinApi.js`; Limusic's "update banner" setting turns it off). A newer
+build shows as "Update available: …" in the title for 20 seconds when the window opens, then
+every half minute while paused or with nothing playing, never over a playing song, and first in
+the main menu. Clicking either opens the update dialog (`UpdateWindow.svelte`): the new version and
+yours, Download (the release page) or Later. The About window has Check for updates too.
+
 ## Name and icon
 
 People see **YTMinamp (limusic)**: tray, window titles, media controls, notifications, the About
@@ -445,6 +456,30 @@ WebKitGTK scales page content by the desktop's font DPI / text-scaling factor, s
 in a 275 px window can come out ~4.5% (or much more) too big: the skin overflows the window and
 every click lands in the wrong place. `WinampSkin.svelte` measures the real CSS-px-to-screen-px
 ratio on open and cancels it with the webview zoom. Don't remove that.
+
+## Drawing and CPU
+
+Each Winamp window is one canvas, redrawn whole by `ui/src/lib/skin/render/loop.js`, but only
+when it can change: every frame for half a second after input (mouse, wheel, keys, focus,
+resize) or a pick in our GTK menu (`wake()`), and while something moves (lyrics easing to the
+sung line); otherwise once per marquee step (220 ms), which covers the scrolling title, the
+clocks and whatever the backend changed. So with no input, a change can show up to 220 ms late.
+
+The analyzer is the one thing that moves every frame while music plays, so it has a canvas of
+its own over main.bmp's vis box (`WinampSkin.svelte`), drawn from a pixel buffer; the main
+canvas stays at the slow rate. Other per-frame work is cached: the album cover scaled once per
+size (`albumArt.js`), the playlist's running times once per queue (`playlist.js`), MilkDrop's
+frame redrawn only when it changes. `viz.rs` sends silence five times a second, not sixty.
+
+Measured on the dev machine (i9-10850K, Fedora 44 KDE), main window with the EQ, search,
+playlist, album art and lyrics docked, as % of one core (`top`, 20 s):
+
+| | Before | After |
+|---|---|---|
+| Stopped: page (WebKitWebProcess) + app | 22% + 5.5% | 2.5% + 1% |
+| Playing: page + app | 25.5% + 16% | 10% + 16% |
+
+The app process while playing is mpv plus the analyzer's 19 band filters, untouched so far.
 
 ## Development
 

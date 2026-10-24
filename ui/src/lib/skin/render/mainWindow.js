@@ -29,8 +29,6 @@ import {
 } from "./sprites.js";
 import { drawTimeDigits } from "./numbers.js";
 import { drawText, drawTitle } from "./marquee.js";
-import { drawAnalyzer } from "./visualizer.js";
-import { analyzerColumns } from "../testPattern.js";
 import { isLit } from "../focus.js";
 
 /** @typedef {import("../ipc.js").RegionPayload} RegionPayload */
@@ -111,9 +109,8 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
   const titlebar = sprites.get("titlebar");
   if (titlebar) ctx.drawImage(titlebar, 27, isLit("main") ? 0 : 15, MAIN_W, 14, 0, 0, MAIN_W, 14);
 
-  if (uiState.visMode === "analyzer") {
-    drawAnalyzer(ctx, uiState.viscolor, analyzerColumns(performance.now()));
-  }
+  // The analyzer has a canvas of its own over this box (WinampSkin.svelte): it moves every frame,
+  // the rest of the window a few times a second.
 
   drawButtons(ctx, sprites, uiState);
   drawPlaylistToggle(ctx, sprites, uiState);

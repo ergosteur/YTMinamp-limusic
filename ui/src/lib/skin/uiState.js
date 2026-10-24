@@ -49,6 +49,8 @@ export const uiState = {
 	/** Shown in place of the title until `marqueeMessageUntil` (performance.now() ms). */
 	marqueeMessage: '',
 	marqueeMessageUntil: 0,
+	/** The message showing is the update one: a click on the title opens the update dialog. */
+	marqueeIsUpdate: false,
 
 	// Docked panels under the main window, top to bottom: search, then the playlist editor.
 	// See layout.js.

@@ -18,6 +18,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { open } from '@tauri-apps/plugin-dialog';
 import * as api from '$lib/api';
+import { wake } from './render/loop.js';
 import {
 	addSongsToPlaylists,
 	enqueue,
@@ -69,6 +70,7 @@ import {
 	toggleShuffle,
 	zoomLyrics,
 	setVizLevels,
+	showUpdateDialog,
 	ABOUT_SIZE,
 	toggleStopAfterCurrent,
 	stopWithFadeout
@@ -77,6 +79,7 @@ import { toggleTimeRemaining, toggleVisualizer } from './input.js';
 import { EQ_PRESETS } from './render/equalizer.js';
 import { lyricsNow, lyricsShow, lyricsTrack, pickedLyrics, toggleLyricsShow } from './lyrics.js';
 import { doubleFactor, zoomFactor } from './pixels.js';
+import { updateState } from '$lib/updater.svelte';
 import { thumb } from '$lib/thumb';
 import { SEARCH_KINDS, isSongRow } from './searchKinds.js';
 import { openInLimusic, toggleLimusic } from './navigate.js';
@@ -158,7 +161,10 @@ async function popup(describe, at) {
 		if (gtkMenus !== false) {
 			if (!listening) {
 				// Hears every window's picks; the ids are this window's own (see toEntries).
-				await listen('winamp-menu', (e) => actions.get(/** @type {string} */ (e.payload))?.());
+				await listen('winamp-menu', (e) => {
+					actions.get(/** @type {string} */ (e.payload))?.();
+					wake();
+				});
 				listening = true;
 			}
 			actions = new Map();
@@ -937,6 +943,10 @@ export function showMainMenu(switchSkin, at) {
 		];
 		return {
 			items: [
+				// A newer build: first, where it can't be missed (the update dialog).
+				...(updateState.available && !updateState.available.rollback
+					? [{ text: `Update available: ${updateState.available.version}…`, action: showUpdateDialog }, SEPARATOR]
+					: []),
 				{ text: 'About ytminamp…', action: () => showAbout().catch(log('about')) },
 				SEPARATOR,
 				{

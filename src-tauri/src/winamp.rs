@@ -20,8 +20,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 10] =
-    ["art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about"];
+pub const PANELS: [&str; 11] = [
+    "art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about", "update",
+];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
 
@@ -183,6 +184,7 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "eqsave" => "Save EQ Preset",
         "fileinfo" => "File Info",
         "about" => "About YTMinamp",
+        "update" => "YTMinamp Update",
         _ => "Search",
     };
     // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a

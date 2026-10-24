@@ -161,6 +161,27 @@ function blit(ctx, sheet, r, dx, dy, w = r.w, sx = 0) {
 	ctx.drawImage(sheet, r.x + sx, r.y, w, r.h, dx, dy, w, r.h);
 }
 
+/** The cover last scaled, at the size it was scaled to: a frame copies it rather than scaling the
+ * full-size picture again. */
+let scaled = { image: /** @type {HTMLImageElement | null} */ (null), w: 0, h: 0, canvas: /** @type {HTMLCanvasElement | null} */ (null) };
+
+/**
+ * `image` cropped to a centred square (video thumbnails are 16:9) and scaled to w×h.
+ * @param {HTMLImageElement} image @param {number} w @param {number} h
+ */
+function scaledCover(image, w, h) {
+	if (scaled.canvas && scaled.image === image && scaled.w === w && scaled.h === h) return scaled.canvas;
+	const canvas = scaled.canvas ?? document.createElement('canvas');
+	canvas.width = w;
+	canvas.height = h;
+	const side = Math.min(image.naturalWidth, image.naturalHeight);
+	const sx = (image.naturalWidth - side) / 2;
+	const sy = (image.naturalHeight - side) / 2;
+	/** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d')).drawImage(image, sx, sy, side, side, 0, 0, w, h);
+	scaled = { image, w, h, canvas };
+	return canvas;
+}
+
 /**
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
@@ -180,16 +201,13 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed, caption = nu
 	ctx.rect(x, y, w, h);
 	ctx.clip();
 
-	// Picture first: cropped to a centred square, since video thumbnails are 16:9.
+	// Picture first: cropped to a centred square (see `scaledCover`).
 	const cap = caption ? ART_CAPTION_H : 0;
 	const inner = { x: x + i.left, y: y + i.top, w: w - i.left - i.right, h: h - i.top - i.bottom - cap };
 	ctx.fillStyle = '#000000';
 	ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
-	if (image && image.naturalWidth > 0) {
-		const side = Math.min(image.naturalWidth, image.naturalHeight);
-		const sx = (image.naturalWidth - side) / 2;
-		const sy = (image.naturalHeight - side) / 2;
-		ctx.drawImage(image, sx, sy, side, side, inner.x, inner.y, inner.w, inner.h);
+	if (image && image.naturalWidth > 0 && inner.w > 0 && inner.h > 0) {
+		ctx.drawImage(scaledCover(image, inner.w, inner.h), inner.x, inner.y);
 	}
 	if (caption) {
 		// In the playlist's font and colours: a canvas font, so any script shows (text.bmp is A-Z).

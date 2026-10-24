@@ -223,11 +223,16 @@
 			}
 		}
 
+		/** What the frame was last drawn for: it's redrawn only when that changes. */
+		let frameDrawn = /** @type {unknown[]} */ ([]);
 		function drawFrameNow() {
 			const ctx = frameCanvas.getContext('2d');
 			if (!ctx) return;
 			const w = window.innerWidth;
 			const h = window.innerHeight;
+			const drawing = [w, h, fullscreen, sprites, closePressed, isLit('milkdrop')];
+			if (drawing.every((v, i) => v === frameDrawn[i])) return;
+			frameDrawn = drawing;
 			if (frameCanvas.width !== w || frameCanvas.height !== h) {
 				frameCanvas.width = w;
 				frameCanvas.height = h;

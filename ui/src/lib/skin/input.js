@@ -45,6 +45,8 @@ import {
 	togglePlayPause,
 	resizeToLayout,
 	showNowFileInfo,
+	showUpdateDialog,
+	updateMessageShowing,
 	toggleShuffle,
 	zoomLyrics
 } from './skinApi.js';
@@ -370,6 +372,7 @@ function tooltipAt(hit) {
 	const x = hit.px;
 	const y = hit.py;
 	if (hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+		if (updateMessageShowing()) return 'A new YTMinamp build is out: click for the details';
 		const now = playback.now;
 		const tip = now ? songTip({ title: now.title, artists: now.artists, album: now.album ?? undefined, duration: now.duration }) : 'Nothing playing';
 		return `${tip}\n\nDouble-click for file info, right-click for more`;
@@ -610,6 +613,11 @@ export function attachInput(canvas, host) {
 		}
 		if (hits(ABOUT_POS, ABOUT_POS, x, y)) {
 			showAbout().catch((e) => console.error('about failed', e));
+			return;
+		}
+		// The update notice in the title: a click opens the update dialog.
+		if (event.detail === 1 && updateMessageShowing() && hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+			showUpdateDialog();
 			return;
 		}
 		// The song title: double-click for file info, as in Winamp.
