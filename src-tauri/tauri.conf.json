@@ -39,6 +39,8 @@
   "bundle": {
     "active": true,
     "category": "Music",
+    "shortDescription": "Desktop YouTube Music client with a classic Winamp 2.x skin mode",
+    "longDescription": "YTMinamp (limusic) is Limusic, a desktop YouTube Music client, with a classic Winamp 2.x skin mode: real .wsz skins, the equalizer, spectrum analyzer, MilkDrop visualizations, the playlist editor and a Media Library.",
     "targets": ["deb", "rpm", "appimage"],
     "createUpdaterArtifacts": true,
     "icon": [
