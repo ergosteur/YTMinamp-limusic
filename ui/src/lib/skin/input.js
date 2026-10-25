@@ -53,7 +53,7 @@ import {
 import { ART_CLOSE, artTitleHeight, frameInset } from './render/albumArt.js';
 import { onFrame } from './frameWindow.js';
 import { EQ_BANDS, eqHit, eqValueAt } from './render/equalizer.js';
-import { LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
+import { LIBRARY_MAX_W, LIBRARY_MIN_W, LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
 import { savePref } from './prefs.js';
 import { setActivePart } from './focus.js';
 import { showAbout } from './menu.js';
@@ -258,6 +258,19 @@ export function rowAt(kind, x, py, size = DOCKED) {
 	return i < rowCount(kind) ? i : null;
 }
 
+/**
+ * Which playlist or search row the pointer is on, kept with when it got there (uiState.rowHover)
+ * while it stays on the same one.
+ * @param {Hit | null} hit
+ */
+function noteRowHover(hit) {
+	const kind = hit?.kind === 'playlist' || hit?.kind === 'search' ? hit.kind : null;
+	const index = kind && hit && hit.py >= PL_TITLEBAR_H ? rowAt(kind, hit.px, hit.py, { w: hit.w, h: hit.h }) : null;
+	const was = uiState.rowHover;
+	if (!kind || index === null) uiState.rowHover = null;
+	else if (was?.kind !== kind || was.index !== index) uiState.rowHover = { kind, index, since: performance.now() };
+}
+
 /** The mini transport button under panel-relative (x, py), or null. @param {number} x @param {number} py @param {Size} size */
 function transportAt(x, py, size) {
 	const t = geometry(size).transport;
@@ -283,7 +296,7 @@ const PLAYLIST_BUTTON_TIPS = {
 	rem: 'Remove the selected track, or clear the queue',
 	sel: 'Select all, none, or invert (Ctrl/Shift+click picks several)',
 	misc: 'Sort or reverse what plays next',
-	list: 'Load a playlist from your library, or save the queue as one'
+	list: 'Load a playlist from the library, or save the queue as one'
 };
 
 const SEARCH_BUTTON_TIPS = /** @type {Record<string, string>} */ ({
@@ -304,7 +317,7 @@ function songTip(item) {
 		.join('\n');
 }
 
-/** Panel-relative (px, py) is on a framed panel's (album art, lyrics) close button. @param {Hit} hit */
+/** Panel-relative (px, py) is on a framed panel's (album art, lyrics, library) close button. @param {Hit} hit */
 function onArtClose(hit) {
 	return hits({ x: hit.w + ART_CLOSE.dx, y: ART_CLOSE.y }, ART_CLOSE, hit.px, hit.py);
 }
@@ -363,6 +376,10 @@ function tooltipAt(hit) {
 			'Right-click for romanization and translations',
 			'Double-click the titlebar to float or dock'
 		].join('\n');
+	}
+	if (hit.kind === 'library') {
+		if (onArtClose(hit)) return 'Close Media Library';
+		return hit.py < artTitleHeight(uiState.art.frame) ? 'Double-click to float or dock' : '';
 	}
 	if (hit.kind === 'art') {
 		if (onArtClose(hit)) return 'Close album art';
@@ -426,11 +443,11 @@ function tooltipAt(hit) {
  */
 export function attachInput(canvas, host) {
 	current = host;
-	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | { what: 'lyricsWidth', left: number } | null} */
+	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | { what: 'width', kind: 'lyrics' | 'library', left: number } | null} */
 	let drag = null;
-	/** Docked lyrics are resized from their right edge; floating ones have their window's grip. */
-	const onLyricsEdge = (/** @type {Hit | null} */ hit) =>
-		hit?.kind === 'lyrics' &&
+	/** Docked lyrics and library are resized from their right edge; floating ones from their window's. */
+	const onWidthEdge = (/** @type {Hit | null} */ hit) =>
+		(hit?.kind === 'lyrics' || hit?.kind === 'library') &&
 		getCurrentWindow().label === 'winamp' &&
 		hit.px >= hit.w - LYRICS_EDGE &&
 		hit.py >= artTitleHeight(uiState.art.frame);
@@ -569,14 +586,14 @@ export function attachInput(canvas, host) {
 			}
 			return;
 		}
-		if (hit.kind === 'lyrics') {
-			if (onLyricsEdge(hit)) {
-				drag = { what: 'lyricsWidth', left: hit.x };
+		if (hit.kind === 'lyrics' || hit.kind === 'library') {
+			if (onWidthEdge(hit)) {
+				drag = { what: 'width', kind: hit.kind, left: hit.x };
 			} else if (onArtClose(hit)) {
-				uiState.lyrics.closePressed = true;
-				closing = 'lyrics';
+				uiState[hit.kind].closePressed = true;
+				closing = hit.kind;
 			} else if (hit.py < artTitleHeight(uiState.art.frame) && event.detail >= 2) {
-				host.popOut('lyrics');
+				host.popOut(hit.kind);
 			} else {
 				press = { x: event.screenX, y: event.screenY };
 			}
@@ -670,9 +687,12 @@ export function attachInput(canvas, host) {
 		if (host.hitTest(point.x, point.y)?.kind === 'lyrics') zoomLyrics(step);
 	});
 
+	// The pointer left, or the list moved under it: no row is being read any more.
+	canvas.addEventListener('mouseleave', () => (uiState.rowHover = null));
 	canvas.addEventListener(
 		'wheel',
 		(event) => {
+			uiState.rowHover = null;
 			const point = canvasPoint(canvas, event);
 			const hit = host.hitTest(point.x, point.y);
 			if (hit?.kind === 'lyrics') {
@@ -698,9 +718,10 @@ export function attachInput(canvas, host) {
 	canvas.addEventListener('mousemove', (event) => {
 		const { x, y } = canvasPoint(canvas, event);
 		const hit = host.hitTest(x, y);
-		const tip = onLyricsEdge(hit) ? 'Drag to resize' : tooltipAt(hit);
+		const tip = onWidthEdge(hit) ? 'Drag to resize' : tooltipAt(hit);
 		if (canvas.title !== tip) canvas.title = tip;
-		const cursor = drag?.what === 'lyricsWidth' || onLyricsEdge(hit) ? 'ew-resize' : '';
+		noteRowHover(hit);
+		const cursor = drag?.what === 'width' || onWidthEdge(hit) ? 'ew-resize' : '';
 		if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 	});
 
@@ -723,11 +744,12 @@ export function attachInput(canvas, host) {
 			scrollFromHandleY(drag.kind, y - drag.top, drag.size);
 		} else if (drag.what === 'eq') {
 			setEqSlider(drag.slider, eqValueAt(y - drag.top));
-		} else if (drag.what === 'lyricsWidth') {
-			// Canvas px from the lyrics' left edge, which stays put: no double-size maths needed.
-			const width = Math.round(Math.max(LYRICS_MIN_W, Math.min(LYRICS_MAX_W, cx - drag.left)));
-			if (width !== uiState.lyrics.width) {
-				uiState.lyrics.width = width;
+		} else if (drag.what === 'width') {
+			// Canvas px from the panel's left edge, which stays put: no double-size maths needed.
+			const [min, max] = drag.kind === 'lyrics' ? [LYRICS_MIN_W, LYRICS_MAX_W] : [LIBRARY_MIN_W, LIBRARY_MAX_W];
+			const width = Math.round(Math.max(min, Math.min(max, cx - drag.left)));
+			if (width !== uiState[drag.kind].width) {
+				uiState[drag.kind].width = width;
 				resizeToLayout();
 			}
 		}
@@ -744,7 +766,7 @@ export function attachInput(canvas, host) {
 		const hit = host.hitTest(point.x, point.y);
 		if (!hit || hit.kind !== kind) return false;
 		if (kind === 'main') return buttonAt(hit.px, hit.py) === button;
-		if (kind === 'art' || kind === 'lyrics') return onArtClose(hit);
+		if (kind === 'art' || kind === 'lyrics' || kind === 'library') return onArtClose(hit);
 		if (kind === 'eq') return eqHit(hit.px, hit.py) === 'close';
 		const g = geometry({ w: hit.w, h: hit.h });
 		return hits(g.close, g.close, hit.px, hit.py);
@@ -762,8 +784,8 @@ export function attachInput(canvas, host) {
 			panelState(drag.kind).draggingScroll = false;
 		} else if (drag?.what === 'eq') {
 			uiState.eq.dragging = null;
-		} else if (drag?.what === 'lyricsWidth') {
-			savePref('lyricsWidth', uiState.lyrics.width);
+		} else if (drag?.what === 'width') {
+			savePref(`${drag.kind}Width`, uiState[drag.kind].width);
 		}
 		drag = null;
 		const eqPressed = uiState.eq.pressed;
@@ -778,7 +800,7 @@ export function attachInput(canvas, host) {
 			uiState.pressedButton = null;
 		}
 		const close = closing !== null && releasedOn(event, closing);
-		if (closing === 'art' || closing === 'lyrics') {
+		if (closing === 'art' || closing === 'lyrics' || closing === 'library') {
 			uiState[closing].closePressed = false;
 		} else if (closing === 'search' || closing === 'playlist') {
 			panelState(closing).pressed = null;

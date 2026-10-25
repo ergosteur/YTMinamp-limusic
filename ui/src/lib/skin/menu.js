@@ -22,10 +22,22 @@ import * as api from '$lib/api';
 import { wake } from './render/loop.js';
 import {
 	addSongsToPlaylists,
+	addToLibrary,
+	auth,
 	enqueue,
+	inLibrary,
 	inSongLibrary,
+	isSaved,
+	library,
+	loadLibraryExtras,
+	noteLibrary,
+	ownedByUser,
 	playback,
+	playFrom,
+	prefs,
+	setAutoplay,
 	ratingOf,
+	removeFromLibrary,
 	setRating,
 	songLibraryToken,
 	toggleSongLibrary
@@ -50,6 +62,7 @@ import {
 	toggleDoubleSize,
 	togglePanel,
 	flashMarquee,
+	knowSettings,
 	queueResults,
 	playResults,
 	openEqPresetDialog,
@@ -82,16 +95,19 @@ import { lyricsShow, toggleLyricsShow } from './lyrics.js';
 import { doubleFactor, zoomFactor } from './pixels.js';
 import { updateState } from '$lib/updater.svelte';
 import { thumb } from '$lib/thumb';
-import { SEARCH_KINDS, isSongRow } from './searchKinds.js';
+import { SEARCH_KINDS, isSongRow, songsIn } from './searchKinds.js';
 import { openLimusicSettings, toggleLimusic } from './navigate.js';
 import { libraryShown, openLibrary, toggleLibrary } from './library.js';
+import { newPlaylistFor } from './newPlaylist.js';
 import { copyText } from '$lib/clipboard';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { uiState } from './uiState.js';
 import {
 	clearUpcoming,
+	addablePlaylists,
 	cropToSelected,
+	knowAccount,
 	libraryPlaylists,
 	loadPlaylist,
 	removeSelected,
@@ -234,50 +250,90 @@ async function resultItems(index = null) {
 		{ text: 'View file info...', accel: 'Alt+3', enabled: !!info, action: () => info && showFileInfo(info) },
 		SEPARATOR,
 		rows.some((i) => isSongRow(results[i]))
-			? { text: 'Rate items', items: await ratingItems(rows.map((i) => results[i]).filter(isSongRow)) }
+			? { text: 'Rate items', items: ratingItems(rows.map((i) => results[i]).filter(isSongRow)) }
 			: { text: 'Rate items', enabled: false },
+		...(await saveItems(rows.map((i) => results[i]))),
 		...itemExtras(results[index ?? rows[0]])
 	];
 }
 
 /**
- * Rate items ▸: Like / Dislike / No rating (ticked for how the first is rated now), then Add to /
- * Remove from library and Add to existing playlist. All Limusic's own (player.svelte.ts
- * `setRating`, `toggleSongLibrary`, `addSongsToPlaylists`), so they show there too.
+ * Rate items ▸: Like / Dislike / No rating (ticked for how the first is rated now), Limusic's own
+ * (player.svelte.ts `setRating`), so they show there too.
  * @param {import('$lib/api').SongItem[]} items
  */
-async function ratingItems(items) {
+function ratingItems(items) {
 	const now = items[0] ? ratingOf(items[0]) : null;
 	/** @param {import('$lib/api').Rating} r */
 	const rate = (r) =>
 		Promise.all(items.map((item) => setRating(item, r)))
 			.then(() => flashMarquee(r === 'like' ? 'Liked' : r === 'dislike' ? 'Disliked' : 'Rating cleared'))
 			.catch((e) => flashMarquee(`Couldn't rate: ${e}`));
-	// Library ▸ Songs takes a token YouTube mints per row, so only rows that came with one can move.
-	const movable = items.filter((item) => songLibraryToken(item));
-	const saved = movable.length > 0 && movable.every((item) => inSongLibrary(item));
-	const library = () =>
-		Promise.all(movable.map((item) => toggleSongLibrary(item)))
-			.then(() => flashMarquee(saved ? 'Removed from library' : 'Added to library'))
-			.catch((e) => flashMarquee(`Couldn't change the library: ${e}`));
-	// Playlists songs can go into: not On Repeat or Liked Music. The cached list, like LIST's.
-	const { playlists } = await libraryPlaylists();
-	const targets = playlists.filter((p) => p.id !== api.ON_REPEAT_ID && p.id !== api.LIKED_MUSIC_ID);
-	const addTo = (/** @type {import('$lib/api').BrowseItem} */ p) =>
-		addSongsToPlaylists([p], items, 'skip')
-			.then(() => flashMarquee(`Added to ${p.title}`))
-			.catch((e) => flashMarquee(`Couldn't add: ${e}`));
 	return [
 		{ text: 'Like', checked: now === 'like', action: () => rate('like') },
 		{ text: 'Dislike', checked: now === 'dislike', action: () => rate('dislike') },
-		{ text: 'No rating', checked: now === 'indifferent', action: () => rate('indifferent') },
-		SEPARATOR,
-		movable.length
-			? { text: saved ? 'Remove from library' : 'Add to library', action: library }
-			: { text: 'Add to library', enabled: false },
-		targets.length
+		{ text: 'No rating', checked: now === 'indifferent', action: () => rate('indifferent') }
+	];
+}
+
+/**
+ * Add to / Remove from library, Add to existing playlist ▸ and Add to new playlist..., at the top
+ * level of a menu, for
+ * songs (Limusic's `toggleSongLibrary`, `addSongsToPlaylists`) or albums and playlists (its card
+ * menu's `addToLibrary` / `removeFromLibrary`, and their tracks into a playlist). Artists and
+ * headers take no part; songs mixed with albums can go into a playlist but not the library at once.
+ * @param {(import('./searchKinds.js').SearchRow | import('$lib/api').SongItem | undefined)[]} picked
+ */
+async function saveItems(picked) {
+	const rows = /** @type {import('./searchKinds.js').SearchRow[]} */ (picked).filter(
+		(r) => r && r.rowKind !== 'header' && r.rowKind !== 'artist'
+	);
+	await knowAccount();
+	const songs = rows.filter((r) => !r.browse);
+	const cards = rows.flatMap((r) => (r.browse ? [r.browse] : []));
+	/** @param {Promise<unknown>} write @param {boolean} saved */
+	const say = (write, saved) =>
+		write
+			.then(() => flashMarquee(saved ? 'Removed from library' : 'Added to library'))
+			.catch((e) => flashMarquee(`Couldn't change the library: ${e}`));
+	/** @type {{ text: string, enabled?: boolean, action?: () => unknown }} */
+	let library = { text: 'Add to library', enabled: false };
+	if (songs.length && !cards.length) {
+		// Library ▸ Songs takes a token YouTube mints per row, so only rows that came with one can move.
+		const movable = songs.filter((item) => songLibraryToken(item));
+		const saved = movable.length > 0 && movable.every((item) => inSongLibrary(item));
+		if (movable.length) {
+			library = {
+				text: saved ? 'Remove from library' : 'Add to library',
+				// Limusic's toggle says how it went itself (tickerToast).
+				action: () => Promise.all(movable.map((item) => toggleSongLibrary(item)))
+			};
+		}
+	} else if (cards.length && !songs.length) {
+		const saved = cards.every((card) => inLibrary(card));
+		// The user's own playlists are in the library by being theirs: nothing to take out.
+		const removable = cards.filter((card) => !ownedByUser(card));
+		library = saved
+			? removable.length
+				? { text: 'Remove from library', action: () => say(Promise.all(removable.map(removeFromLibrary)), true) }
+				: { text: 'Remove from library', enabled: false }
+			: { text: 'Add to library', action: () => say(Promise.all(cards.filter((card) => !inLibrary(card)).map(addToLibrary)), false) };
+	}
+	// Playlists that accept songs: local ones, the user's own and shared ones, not ones saved from
+	// others (YouTube won't take them). The cached list, like LIST's.
+	const targets = await addablePlaylists((await libraryPlaylists()).playlists);
+	// An album's or playlist's tracks are fetched when one is picked, not as the menu opens. Limusic's
+	// add says how it went itself, partly or not at all included (tickerToast).
+	const addTo = (/** @type {import('$lib/api').BrowseItem} */ p) =>
+		songsIn(rows)
+			.then((items) => addSongsToPlaylists([p], items, 'skip'))
+			.catch((e) => flashMarquee(`Couldn't add: ${e}`));
+	return [
+		library,
+		rows.length && targets.length
 			? { text: 'Add to existing playlist', items: targets.map((p) => ({ text: p.title, action: () => addTo(p) })) }
-			: { text: 'Add to existing playlist', enabled: false }
+			: { text: 'Add to existing playlist', enabled: false },
+		{ text: 'Add to new playlist...', enabled: rows.length > 0, action: () => newPlaylistFor(() => songsIn(rows)) }
 	];
 }
 
@@ -297,7 +353,8 @@ export function showTitleMenu(at) {
 				SEPARATOR,
 				check('Autoscroll songname', uiState.marqueeScroll, '', toggleMarqueeScroll),
 				SEPARATOR,
-				now ? { text: 'Rating', items: await ratingItems([now]) } : { text: 'Rating', enabled: false },
+				now ? { text: 'Rating', items: ratingItems([now]) } : { text: 'Rating', enabled: false },
+				...(await saveItems([now ?? undefined])),
 				...itemExtras(now ?? undefined)
 			]
 		};
@@ -447,7 +504,8 @@ export function showQueueRowMenu(index, at) {
 				SEPARATOR,
 				{ text: 'View file info...', accel: 'Alt+3', enabled: !!item, action: () => item && showFileInfo(item) },
 				SEPARATOR,
-				{ text: 'Rate items', items: await ratingItems(markedRows(uiState.pl).map((i) => playback.queue.items[i]).filter(Boolean)) },
+				{ text: 'Rate items', items: ratingItems(rows.map((i) => playback.queue.items[i]).filter(Boolean)) },
+				...(await saveItems(rows.map((i) => playback.queue.items[i]))),
 				...itemExtras(item)
 			]
 		};
@@ -481,8 +539,8 @@ async function queueRowsAgain(rows) {
 
 /**
  * The entries Limusic has for a song or a search result that Winamp has no word for, as a group
- * at the end of its menu: Start radio, Go to artist / album (in Limusic's window, the media library
- * here), and its link (Limusic's Share, which only its own window has). For the row clicked.
+ * at the end of its menu: Show in Media Library (its page, or a song's album; Limusic's Go to album)
+ * and Show artist in Media Library (a song's; Go to artist), Start radio, and its link (Limusic's Share, which only its own window has). For the row clicked.
  * @param {import('./searchKinds.js').SearchRow | import('$lib/api').SongItem | undefined} item
  */
 function itemExtras(item) {
@@ -497,19 +555,22 @@ function itemExtras(item) {
 				? () => api.startRadio('song', item.video_id, item.title)
 				: null;
 	const out = [];
+	/** @param {string} text @param {string} kind @param {string} id */
+	const show = (text, kind, id) => ({
+		text,
+		action: () => openLibrary(`/${kind}/${encodeURIComponent(id)}`).catch(log(text.toLowerCase()))
+	});
+	// Albums, playlists and artists have a page of their own there; a song has no page, so its
+	// album's stands in, and its artist's beside it.
+	if (browse) out.push(show('Show in Media Library', browse.kind, browse.id));
+	else if (item.album_id) out.push(show('Show in Media Library', 'album', item.album_id));
+	if (!browse && item.artist_id) out.push(show('Show artist in Media Library', 'artist', item.artist_id));
+	if (browse?.kind === 'artist') out.push(...artistItems(browse));
 	if (radio) {
 		out.push({
 			text: 'Start radio',
 			action: () => radio().then(() => flashMarquee('Radio started'), (e) => flashMarquee(`No radio for this: ${e}`))
 		});
-	}
-	if (!browse && item.artist_id) {
-		const id = item.artist_id;
-		out.push({ text: 'Go to artist', action: () => openLibrary(`/artist/${encodeURIComponent(id)}`).catch(log('go to artist')) });
-	}
-	if (!browse && item.album_id) {
-		const id = item.album_id;
-		out.push({ text: 'Go to album', action: () => openLibrary(`/album/${encodeURIComponent(id)}`).catch(log('go to album')) });
 	}
 	if (link) {
 		out.push(
@@ -518,6 +579,41 @@ function itemExtras(item) {
 		);
 	}
 	return out.length ? [SEPARATOR, ...out] : [];
+}
+
+/**
+ * An artist's Shuffle and Subscribe, as its page has them (routes/artist/[id]): its top songs
+ * shuffled, and the subscribe button, for its channel (which only the artist's page carries).
+ * Whether it's subscribed is known here from the library's subscriptions and what this machine
+ * noted; YouTube's own answer decides when it's picked.
+ * @param {import('$lib/api').BrowseItem} card
+ */
+function artistItems(card) {
+	const signedIn = !!auth.account?.signedIn;
+	if (signedIn) loadLibraryExtras();
+	const subscribed = isSaved(card.id) || library.subscriptions.some((i) => i.id === card.id);
+	const shuffle = async () => {
+		const artist = await api.getArtist(card.id);
+		// The whole top-songs playlist (the page's "See all"), else the few songs on the page.
+		const top = artist.topSongsId ? await api.getPlaylist(artist.topSongsId) : null;
+		if (top?.items.length) return playFrom(card, top.items, null, artist.topSongsId, true, top.continuation);
+		if (!artist.topSongs.length) throw new Error('no songs');
+		return playFrom(card, artist.topSongs, null, undefined, true);
+	};
+	const subscribe = async () => {
+		const artist = await api.getArtist(card.id);
+		const next = !subscribed;
+		if (artist.subscribed !== next) await api.subscribe(artist.channelId, next);
+		noteLibrary(card, next);
+		if (!next) library.subscriptions = library.subscriptions.filter((i) => i.id !== card.id);
+		flashMarquee(next ? `Subscribed to ${artist.name ?? card.title}` : 'Unsubscribed');
+	};
+	return [
+		{ text: 'Shuffle', action: () => shuffle().catch((e) => flashMarquee(`Couldn't shuffle: ${e}`)) },
+		signedIn
+			? { text: subscribed ? 'Unsubscribe' : 'Subscribe', action: () => subscribe().catch((e) => flashMarquee(`Couldn't subscribe: ${e}`)) }
+			: { text: 'Subscribe', enabled: false }
+	];
 }
 
 /**
@@ -653,11 +749,16 @@ export function showPlaylistMenu(which, at) {
 			};
 		}
 		if (which === 'misc') {
+			// Fresh: Autoplay may have changed in Limusic's window since.
+			await knowSettings();
 			return {
 				items: [
 					{ text: 'Sort by title', action: () => sortUpcoming('title').catch(log('sort')) },
 					{ text: 'Sort by artist', action: () => sortUpcoming('artist').catch(log('sort')) },
-					{ text: 'Reverse', action: () => reverseUpcoming().catch(log('reverse')) }
+					{ text: 'Reverse', action: () => reverseUpcoming().catch(log('reverse')) },
+					SEPARATOR,
+					// Limusic's autoplay: when the queue runs out, more like it plays on.
+					check('Autoplay', prefs.autoplay, '', () => setAutoplay(!prefs.autoplay))
 				]
 			};
 		}
@@ -687,7 +788,7 @@ async function libraryItems() {
 	].filter((s) => s.length);
 	return sections.length
 		? sections.flatMap((s, i) => (i ? [SEPARATOR, ...s] : s))
-		: [{ text: 'No playlists in your library', enabled: false }];
+		: [{ text: 'No playlists in the library', enabled: false }];
 }
 
 /** The EQ's PRESETS button: Winamp's built-in presets, and back to flat. @param {MenuAt} at */

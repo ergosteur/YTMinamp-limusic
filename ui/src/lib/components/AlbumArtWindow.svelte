@@ -21,7 +21,7 @@
 	import { uiState } from '../skin/uiState.js';
 	import { attachKeys } from '../skin/keys.js';
 
-	/** The corner you drag to resize, like Winamp's generic windows. */
+	/** The corner that resizes the window when dragged, like Winamp's generic windows. */
 	const GRIP = 14;
 	/** Smallest picture worth showing. */
 	const MIN_WIDTH = 80;

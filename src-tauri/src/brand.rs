@@ -14,12 +14,19 @@ pub const ID: &str = "ytminamp";
 /// left as it was, an upstream release would offer Limusic's download page to ytminamp, and the
 /// beta channel would install Limusic over it. ytminamp's builds aren't signed for the updater,
 /// so this only finds the version; the banner links to the download page. Drafts and pre-releases
-/// don't count. Cached for the process, like `release_notes`.
+/// don't count. An answer is reused for [`RELEASE_FRESH_FOR`] rather than the whole run, so a
+/// session left open for days still hears of a new release; `fresh` (Check for updates) always
+/// asks.
 #[tauri::command]
-pub async fn latest_release() -> Result<Option<String>, String> {
-    static CACHE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    if let Some(cached) = CACHE.get() {
-        return Ok(cached.clone());
+pub async fn latest_release(fresh: Option<bool>) -> Result<Option<String>, String> {
+    type Answer = Option<(std::time::Instant, Option<String>)>;
+    static CACHE: std::sync::Mutex<Answer> = std::sync::Mutex::new(None);
+    if !fresh.unwrap_or(false) {
+        if let Some((at, tag)) = CACHE.lock().unwrap().as_ref() {
+            if at.elapsed() < RELEASE_FRESH_FOR {
+                return Ok(tag.clone());
+            }
+        }
     }
     #[derive(serde::Deserialize)]
     struct GhRelease {
@@ -46,8 +53,12 @@ pub async fn latest_release() -> Result<Option<String>, String> {
         .filter_map(|r| release_key(&r.tag_name).map(|k| (k, r.tag_name)))
         .max_by_key(|(k, _)| *k)
         .map(|(_, tag)| tag);
-    Ok(CACHE.get_or_init(|| newest).clone())
+    *CACHE.lock().unwrap() = Some((std::time::Instant::now(), newest.clone()));
+    Ok(newest)
 }
+
+/// How long [`latest_release`]'s answer is reused.
+const RELEASE_FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// `v1.3.0-ytminamp.6` → `(1, 3, 0, 6)`, which sorts in release order. Other tags → `None`.
 fn release_key(tag: &str) -> Option<(u32, u32, u32, u32)> {

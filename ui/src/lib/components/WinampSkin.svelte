@@ -5,7 +5,7 @@
 	// playback state, same reasoning as the mini player.
 	import { onMount } from 'svelte';
 	import { emit, emitTo, listen } from '@tauri-apps/api/event';
-	import { auth, playback } from '$lib/player.svelte';
+	import { auth, playback, ui } from '$lib/player.svelte';
 	import { logUi } from '$lib/errlog';
 	import { winampAudioInfo } from '$lib/api';
 	import { APP_NAME } from '../skin/brand.js';
@@ -21,7 +21,11 @@
 	import { attachKeys, runKey } from '../skin/keys.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
 	import { applyRegionClip, drawMainWindow, sizeCanvas } from '../skin/render/mainWindow.js';
-	import { artFrame, drawAlbumArt } from '../skin/render/albumArt.js';
+	import { artFrame, drawAlbumArt, drawFrame, frameInset } from '../skin/render/albumArt.js';
+	import { goto } from '$app/navigation';
+	import LibraryPages from './LibraryPages.svelte';
+	import { currentPage, floatLibrary, onLibraryOpenRequest } from '../skin/library.js';
+	import { isLit } from '../skin/focus.js';
 	import { coverFor } from '../skin/art.js';
 	import { LIST, SEARCH_INPUT_H, drawPlaylist, drawSearch } from '../skin/render/playlist.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
@@ -47,6 +51,8 @@
 		selectSkin,
 		setArt,
 		setPanelOpen,
+		knowSettings,
+		tickerToast,
 		togglePanel
 	} from '../skin/skinApi.js';
 	import { onMainMenuRequest, showMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showStopMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
@@ -77,6 +83,10 @@
 	let kindAt = $state(/** @type {{ x: number, y: number } | null} */ (null));
 	let kindText = $state('Songs');
 	/** Where the docked lyrics' HTML view goes (inside render/lyrics.js's frame), while docked. */
+	/** @type {{ page: import('svelte').Snippet }} the route's page, for the docked Media Library */
+	let { page } = $props();
+	/** Where the docked Media Library's pages go (inside its frame), or null if it isn't docked. */
+	let libraryRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
 	let lyricsRect = $state(/** @type {{ x: number, y: number, w: number, h: number } | null} */ (null));
 	/** The lyrics' text size (uiState.lyrics.zoom), for that view. */
 	let lyricsZoom = $state(1);
@@ -132,7 +142,10 @@
 		style.fontFamily = `${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`;
 	}
 
+	$effect(() => tickerToast(ui.toast));
+
 	onMount(() => {
+		knowSettings();
 		// Whether the welcomes suggest signing in (the ticker's above, the search panel's).
 		loadAccount();
 		let stopLoop = () => {};
@@ -209,7 +222,8 @@
 			closePanel: (kind) => (kind === 'art' ? setArt(false) : setPanelOpen(kind, false)),
 			// A docked panel's titlebar floats it (lyrics and the rest alike).
 			// A docked panel's titlebar floats it; a double-click on docked art moves it round.
-			popOut: (kind) => (kind === 'art' ? setArt(true, 'float') : setPanelOpen(kind, true, 'float')),
+			popOut: (kind) =>
+				kind === 'art' ? setArt(true, 'float') : kind === 'library' ? floatLibrary(currentPage()) : setPanelOpen(kind, true, 'float'),
 			moveArt: () => setArt(true, NEXT_DOCK[uiState.art.dock]),
 			toggle: togglePanel
 		});
@@ -229,9 +243,9 @@
 		// Floating panel windows (FloatingPanel.svelte): their ✕ hides the panel, a titlebar
 		// double-click docks it back, their eject/playlist buttons toggle panels here, and however
 		// one closes (Alt+F4 too) the panel's state follows.
-		/** @typedef {{ kind: import('../skin/layout.js').PanelKind, dock: string | null }} DockRequest */
+		/** @typedef {{ kind: import('../skin/layout.js').PanelKind, dock: string | null, path?: string }} DockRequest */
 		const unlistenDock = listen('winamp-panel-dock', (e) => {
-			const { kind, dock } = /** @type {DockRequest} */ (e.payload);
+			const { kind, dock, path } = /** @type {DockRequest} */ (e.payload);
 			// A floating EQ saved its settings as it went: pick them up before drawing it here.
 			if (kind === 'eq') loadPrefs().then(() => Object.assign(uiState.eq, pref('eq', {})));
 			if (kind === 'art') {
@@ -240,13 +254,18 @@
 			} else if (!dock) {
 				setPanelOpen(kind, false);
 			} else {
-				// "Dock" from a floating window: lyrics go back to the right, the rest to the stack.
-				setPanelOpen(kind, true, dock === 'float' ? 'float' : kind === 'lyrics' ? 'right' : 'stack');
+				// "Dock" from a floating window: lyrics and the library go back to the right, the rest
+				// to the stack. The library comes at the page its window showed.
+				const side = kind === 'lyrics' || kind === 'library' ? 'right' : 'stack';
+				setPanelOpen(kind, true, dock === 'float' ? 'float' : side);
+				if (kind === 'library' && path) goto(path).catch(() => {});
 			}
 		});
 		const unlistenToggle = listen('winamp-panel-toggle', (e) =>
 			togglePanel(/** @type {import('../skin/layout.js').PanelKind} */ (e.payload))
 		);
+		// Go to artist / album and the like, from other windows: wherever the library is.
+		const unlistenLibrary = onLibraryOpenRequest();
 		// The main menu, asked for by a right-click on the Media Library's frame.
 		const unlistenMainMenu = onMainMenuRequest((at) =>
 			showMainMenu((path) => applySkin(selectSkin(path)), at).catch((e) => console.error('menu failed', e))
@@ -261,13 +280,19 @@
 		const stopUpdateWatch = watchForUpdates();
 		// A floating playlist's ADD, and the messages floating panels show in this marquee.
 		const unlistenAdd = listen('winamp-search-add', () => openSearch());
-		const unlistenMarquee = listen('winamp-marquee', (e) => flashMarquee(/** @type {string} */ (e.payload)));
+		// A bare string, or { text, ms } from flashMarquee in another window.
+		const unlistenMarquee = listen('winamp-marquee', (e) => {
+			const m = /** @type {string | { text: string, ms: number }} */ (e.payload);
+			if (typeof m === 'string') flashMarquee(m);
+			else flashMarquee(m.text, m.ms);
+		});
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'library'} */ (e.payload);
-			// The Open URL, save-preset, file info, about, update and library windows: nothing here tracks them.
-			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update' || kind === 'library') return;
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'newpl'} */ (e.payload);
+			// The Open URL, save-preset, file info, about, update and new-playlist windows: nothing
+			// here tracks them.
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update' || kind === 'newpl') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
-			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics }[kind];
+			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics, library: uiState.library }[kind];
 			if (view.dock === 'float') view.open = false;
 		});
 
@@ -334,6 +359,15 @@
 			const r = lyricsPanel ? lyricsViewRect(sprites, lyricsPanel) : null;
 			if (r?.x !== lyricsRect?.x || r?.y !== lyricsRect?.y || r?.w !== lyricsRect?.w || r?.h !== lyricsRect?.h) lyricsRect = r;
 			if (uiState.lyrics.zoom !== lyricsZoom) lyricsZoom = uiState.lyrics.zoom;
+			const libraryPanel = layout.panels.find((p) => p.kind === 'library');
+			const inset = frameInset(artFrame(sprites));
+			const lr = libraryPanel && {
+				x: libraryPanel.x + inset.left,
+				y: libraryPanel.y + inset.top,
+				w: libraryPanel.w - inset.left - inset.right,
+				h: libraryPanel.h - inset.top - inset.bottom
+			};
+			if (lr?.x !== libraryRect?.x || lr?.y !== libraryRect?.y || lr?.w !== libraryRect?.w || lr?.h !== libraryRect?.h) libraryRect = lr ?? null;
 			for (const panel of layout.panels) {
 				if (panel.kind === 'art') {
 					const caption = uiState.art.caption ? { text: playback.now?.album ?? '', pledit } : null;
@@ -342,6 +376,10 @@
 				}
 				if (panel.kind === 'lyrics') {
 					drawLyrics(ctx, sprites, pledit, panel, uiState.lyrics.closePressed);
+					continue;
+				}
+				if (panel.kind === 'library') {
+					drawFrame(ctx, sprites, panel, uiState.library.closePressed, 'media library', isLit('library'));
 					continue;
 				}
 				ctx.save();
@@ -372,6 +410,7 @@
 			unlistenViz.then((f) => f());
 			unlistenDock.then((f) => f());
 			unlistenToggle.then((f) => f());
+			unlistenLibrary.then((f) => f());
 			unlistenAdd.then((f) => f());
 			unlistenMarquee.then((f) => f());
 			unlistenClosed.then((f) => f());
@@ -427,6 +466,20 @@
 				showSearchKindMenu({ x: r.left, y: r.bottom }).catch((err) => console.error('menu failed', err));
 			}}>{kindText} ▾</button
 		>
+	{/if}
+	{#if libraryRect}
+		<!-- At its own size in double size: Limusic's pages doubled would show next to nothing. -->
+		{@const f = uiState.doubleSize ? 2 : 1}
+		<div
+			class="absolute"
+			style:left="{libraryRect.x}px"
+			style:top="{libraryRect.y}px"
+			style:width="{libraryRect.w * f}px"
+			style:height="{libraryRect.h * f}px"
+			style:zoom={1 / f}
+		>
+			<LibraryPages {page} />
+		</div>
 	{/if}
 	{#if lyricsRect}
 		<WinampLyricsView rect={lyricsRect} {pledit} zoom={lyricsZoom} onmenu={(at) => showLyricsMenu(at).catch((e) => console.error('menu failed', e))} />

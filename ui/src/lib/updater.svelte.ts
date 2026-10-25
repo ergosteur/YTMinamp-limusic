@@ -28,7 +28,7 @@ export const updateState = $state({
 let pending: Update | null = null;
 
 // ytminamp: its own releases, never Limusic's manifests or beta channel (skin/updates.js).
-const look = (): Promise<boolean> => lookForRelease(updateState);
+const look = (fresh = false): Promise<boolean> => lookForRelease(updateState, fresh);
 
 async function limusicLook(): Promise<boolean> {
 	let u: Update | null;
@@ -135,7 +135,7 @@ export async function recheckForUpdates() {
 export async function checkForUpdatesInteractive(): Promise<{ message: string; error: boolean }> {
 	updateState.checking = true;
 	try {
-		if (await look()) return { message: availableMessage(updateState.available!), error: false };
+		if (await look(true)) return { message: availableMessage(updateState.available!), error: false };
 		return { message: t('settings.about.up_to_date'), error: false };
 	} catch (e) {
 		// Rendered inline in the dialog rather than as a toast, so it misses the toast's own

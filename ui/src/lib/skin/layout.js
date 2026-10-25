@@ -10,7 +10,7 @@ import { artSize } from './render/albumArt.js';
 import { EQ_H } from './render/equalizer.js';
 import { uiState } from './uiState.js';
 
-/** @typedef {'search' | 'playlist' | 'art' | 'eq' | 'lyrics'} PanelKind */
+/** @typedef {'search' | 'playlist' | 'art' | 'eq' | 'lyrics' | 'library'} PanelKind */
 
 /** Docked lyrics: as wide as the stack until dragged wider or narrower (input.js), and as tall
  * as Winamp's classic main + EQ + playlist. */
@@ -18,6 +18,11 @@ export const LYRICS_W = MAIN_W;
 export const LYRICS_MIN_W = 150;
 export const LYRICS_MAX_W = 1200;
 const CLASSIC_STACK_H = MAIN_H + EQ_H + PL_H;
+/** The docked Media Library's width: dragged from its right edge, within these. */
+export const LIBRARY_MIN_W = 480;
+export const LIBRARY_MAX_W = 1600;
+/** Docked lyrics narrow this far to fit the screen before the library gives way (dockedLayout). */
+const LYRICS_FIT_MIN_W = 380;
 /** @typedef {{ kind: PanelKind, x: number, y: number, w: number, h: number }} Placed */
 
 /**
@@ -48,13 +53,32 @@ export function dockedLayout() {
 	if (uiState.pl.open && uiState.pl.dock === 'stack') stack('playlist', PL_H);
 	if (art.open && art.dock === 'stack') stack('art', artSize(art.frame, { width: MAIN_W }, art.caption).h);
 
-	// Lyrics docked: to the right of the whole stack, at least as tall as the classic one (main,
-	// EQ, playlist). Album art can't take that side then (skinApi.js keeps the two apart).
+	// The Media Library docked: right of the stack and exactly as tall (docking it opens search
+	// and the playlist so there's room), never taller.
+	const libraryRight = uiState.library.open && uiState.library.dock === 'right';
 	const lyricsRight = uiState.lyrics.open && uiState.lyrics.dock === 'right';
-	if (lyricsRight) {
-		panels.push({ kind: 'lyrics', x: mainX + MAIN_W, y: 0, w: uiState.lyrics.width, h: Math.max(CLASSIC_STACK_H, y) });
+	let libraryW = libraryRight ? uiState.library.width : 0;
+	let lyricsW = lyricsRight ? uiState.lyrics.width : 0;
+	// Wider than the screen: lyrics give way first, down to LYRICS_FIT_MIN_W, then the library,
+	// down to its minimum. Only as shown: the widths asked for stay, for a wider screen.
+	const fixed = mainX + MAIN_W + (side && art.dock === 'right' ? beside.w : 0);
+	const room = uiState.workWidth ? Math.floor(uiState.workWidth / (uiState.doubleSize ? 2 : 1)) : Infinity;
+	let over = fixed + libraryW + lyricsW - room;
+	if (over > 0 && lyricsW > LYRICS_FIT_MIN_W) {
+		const cut = Math.min(over, lyricsW - LYRICS_FIT_MIN_W);
+		lyricsW -= cut;
+		over -= cut;
 	}
-	const width = mainX + MAIN_W + (side && art.dock === 'right' ? beside.w : 0) + (lyricsRight ? uiState.lyrics.width : 0);
+	if (over > 0 && libraryW > LIBRARY_MIN_W) libraryW -= Math.min(over, libraryW - LIBRARY_MIN_W);
+	if (libraryRight) panels.push({ kind: 'library', x: mainX + MAIN_W, y: 0, w: libraryW, h: y });
+
+	// Lyrics docked: to the right of the whole stack (and the library), at least as tall as the
+	// classic one (main, EQ, playlist). Album art can't take that side then, nor beside the
+	// library (skinApi.js keeps them apart).
+	if (lyricsRight) {
+		panels.push({ kind: 'lyrics', x: mainX + MAIN_W + libraryW, y: 0, w: lyricsW, h: Math.max(CLASSIC_STACK_H, y) });
+	}
+	const width = fixed + libraryW + lyricsW;
 	const height = lyricsRight ? Math.max(CLASSIC_STACK_H, y) : y;
 	return { mainX, width, height, panels };
 }

@@ -51,6 +51,7 @@
 	import MilkdropWindow from '$lib/components/MilkdropWindow.svelte';
 	import { onYtminampNavigate } from '$lib/skin/navigate.js';
 	import EqPresetWindow from '$lib/components/EqPresetWindow.svelte';
+	import NewPlaylistWindow from '$lib/components/NewPlaylistWindow.svelte';
 	import FileInfoWindow from '$lib/components/FileInfoWindow.svelte';
 	import AboutWindow from '$lib/components/AboutWindow.svelte';
 	import UpdateWindow from '$lib/components/UpdateWindow.svelte';
@@ -216,6 +217,7 @@
 	const isWinampUrl = browser && getCurrentWindow().label === 'winamp-url';
 	const isWinampMilkdrop = browser && getCurrentWindow().label === 'winamp-milkdrop';
 	const isWinampEqSave = browser && getCurrentWindow().label === 'winamp-eqsave';
+	const isWinampNewPl = browser && getCurrentWindow().label === 'winamp-newpl';
 	const isWinampFileInfo = browser && getCurrentWindow().label === 'winamp-fileinfo';
 	const isWinampAbout = browser && getCurrentWindow().label === 'winamp-about';
 	const isWinampUpdate = browser && getCurrentWindow().label === 'winamp-update';
@@ -240,7 +242,7 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampFileInfo || isWinampAbout || isWinampUpdate || isWinampLibrary) {
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampNewPl || isWinampFileInfo || isWinampAbout || isWinampUpdate || isWinampLibrary) {
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
@@ -291,7 +293,7 @@
 {#if isMini}
 	<MiniPlayer />
 {:else if isWinamp}
-	<WinampSkin />
+	<WinampSkin page={children} />
 {:else if isWinampArt}
 	<AlbumArtWindow />
 {:else if winampList}
@@ -302,6 +304,8 @@
 	<MilkdropWindow />
 {:else if isWinampEqSave}
 	<EqPresetWindow />
+{:else if isWinampNewPl}
+	<NewPlaylistWindow />
 {:else if isWinampFileInfo}
 	<FileInfoWindow />
 {:else if isWinampAbout}
@@ -309,14 +313,7 @@
 {:else if isWinampUpdate}
 	<UpdateWindow />
 {:else if isWinampLibrary}
-	<MediaLibraryWindow>
-		<Sidebar />
-		<main class="min-w-0 flex-1 overflow-y-auto">
-			{#key `${auth.epoch}:${ui.epoch}`}
-				{@render children()}
-			{/key}
-		</main>
-	</MediaLibraryWindow>
+	<MediaLibraryWindow page={children} />
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
 	     rounds the corners (the compositor can't round an undecorated window for us on Linux).

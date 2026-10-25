@@ -2,7 +2,7 @@
 // the queue as one) on Limusic's real queue. Only the upcoming tracks can move or go: the playing row and the ones
 // before it stay put, the same rule Limusic's own queue panel follows.
 import * as api from '$lib/api';
-import { playFrom, playback } from '$lib/player.svelte';
+import { auth, ownedByUser, playFrom, playback } from '$lib/player.svelte';
 import { parseYtLink } from '$lib/ytlink';
 import { flashMarquee } from './skinApi.js';
 import { uiState } from './uiState.js';
@@ -83,9 +83,103 @@ let fetching = /** @type {Promise<import('$lib/api').BrowseItem[]> | null} */ (n
 export function refreshLibrary() {
 	fetching ??= api
 		.getLibrary()
-		.then((items) => (known = items.filter((item) => item.kind === 'playlist')))
+		.then((items) => {
+			const playlists = items.filter((item) => item.kind === 'playlist');
+			known = playlists;
+			// Ask now, behind the menus, which of the rest songs can go into: once the account is
+			// known, or the owner-name check would vouch for none and every page would be asked.
+			knowAccount().then(() => playlists.forEach((p) => vouched(p) || canAddTo(p)));
+			return playlists;
+		})
 		.finally(() => (fetching = null));
 	return fetching;
+}
+
+/** Can't take songs whatever the page says: On Repeat is built here, Liked Music by liking. */
+const NEVER = (/** @type {import('$lib/api').BrowseItem} */ p) => p.id === api.ON_REPEAT_ID || p.id === api.LIKED_MUSIC_ID;
+
+/**
+ * Accepts songs without a network check: a local playlist, or the user's own by Limusic's
+ * owner-name check (`ownedByUser`, the subtitle's owner against the account's name).
+ * @param {import('$lib/api').BrowseItem} p
+ */
+const vouched = (p) => !NEVER(p) && (api.isLocalPlaylist(p.id) || ownedByUser(p));
+
+/** Playlist id → whether its own page says songs can go in (`owned`, or `collaborative`, which
+ * also covers the user's own with collaboration on: that has no edit header). Asked once a run;
+ * a failure is forgotten, to be asked again. */
+const addable = new Map();
+let asking = 0;
+/** @type {(() => void)[]} */
+const asks = [];
+
+/**
+ * Whether songs can go into `p`, from its page: two at a time, so a library's worth of saved
+ * playlists doesn't land on YouTube at once.
+ * @param {import('$lib/api').BrowseItem} p
+ * @returns {Promise<boolean>}
+ */
+function canAddTo(p) {
+	let answer = addable.get(p.id);
+	if (!answer) {
+		answer = new Promise((resolve) => {
+			asks.push(() => {
+				api
+					.getPlaylist(p.id)
+					.then((page) => resolve(page.owned || page.collaborative))
+					.catch(() => {
+						addable.delete(p.id);
+						resolve(false);
+					})
+					.finally(() => {
+						asking--;
+						nextAsk();
+					});
+			});
+			nextAsk();
+		});
+		addable.set(p.id, answer);
+	}
+	return answer;
+}
+
+function nextAsk() {
+	while (asking < 2 && asks.length) {
+		asking++;
+		/** @type {() => void} */ (asks.shift())();
+	}
+}
+
+/**
+ * The playlists in `playlists` that accept songs: local ones and the user's own straight away, and
+ * the rest (saved from someone else, or a collaborator's) as their pages say, waiting `wait` ms at
+ * most for answers still coming: one that hasn't come is left out this time.
+ * @param {import('$lib/api').BrowseItem[]} playlists
+ * @param {number} [wait]
+ */
+export async function addablePlaylists(playlists, wait = 800) {
+	await knowAccount();
+	const candidates = playlists.filter((p) => !NEVER(p));
+	const late = new Promise((resolve) => setTimeout(() => resolve(false), wait));
+	const verdicts = await Promise.all(candidates.map((p) => vouched(p) || Promise.race([canAddTo(p), late])));
+	return candidates.filter((_, i) => verdicts[i]);
+}
+
+/**
+ * Load the account into Limusic's `auth` if this window hasn't: the Winamp windows start the way
+ * the mini player does (initApp's mini path), which never asks, so its checks (signed in, and
+ * `ownedByUser`'s owner name) would see nobody. Sign-ins and sign-outs after it reach every window.
+ */
+export async function knowAccount() {
+	if (!auth.account) auth.account = await api.getAccount().catch(() => null);
+}
+
+/**
+ * A playlist just made here, at the top of the menus' list before the next fetch has it.
+ * @param {import('$lib/api').BrowseItem} item
+ */
+export function notePlaylist(item) {
+	if (known) known = [item, ...known.filter((p) => p.id !== item.id)];
 }
 
 /**

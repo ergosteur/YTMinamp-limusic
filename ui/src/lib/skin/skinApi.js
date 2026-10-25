@@ -10,8 +10,10 @@ import {
 	dragVolume,
 	nudgeVolume as limusicNudgeVolume,
 	auth,
-	playback
+	playback,
+	prefs
 } from '$lib/player.svelte';
+import { parseScrobbleConfig } from '$lib/scrobble';
 import { uiState } from './uiState.js';
 import { APP_NAME } from './brand.js';
 import { selectNone, selectOnly, trimSelection } from './selection.js';
@@ -24,7 +26,7 @@ import { announceDoubleSize, doubleFactor, setScale } from './pixels.js';
 import { checkForUpdatesQuiet, QUIET_INTERVAL_MS, updateState } from '$lib/updater.svelte';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { artSize } from './render/albumArt.js';
-import { libraryWasOpen, openLibrary } from './library.js';
+import { openLibraryWindow } from './library.js';
 
 /** @typedef {import('$lib/api').SkinPayload} SkinPayload */
 
@@ -46,12 +48,41 @@ export function selectSkin(/** @type {string | null} */ path) {
 export function flashMarquee(text, ms = 2000) {
 	// A floating panel has no marquee of its own: the Winamp window shows it.
 	if (getCurrentWindow().label !== 'winamp') {
-		emitTo('winamp', 'winamp-marquee', text).catch(() => {});
+		emitTo('winamp', 'winamp-marquee', { text, ms }).catch(() => {});
 		return;
 	}
 	uiState.marqueeMessage = text;
 	uiState.marqueeMessageUntil = performance.now() + ms;
 	uiState.marqueeIsUpdate = false;
+}
+
+/**
+ * Limusic's settings that the Winamp windows show, read into its `prefs` here: these windows start
+ * the way the mini player does (initApp's mini path), which never reads them, so the Media
+ * Library toolbar's Discord and Last.fm buttons and MISC's Autoplay would show the defaults. The
+ * same lines as initApp's. Each window at its start; a menu showing one, as it opens.
+ */
+export function knowSettings() {
+	return api
+		.getSettings()
+		.then((s) => {
+			prefs.discordRpc = s.discord_rpc === 'true';
+			prefs.autoplay = s.autoplay !== 'false';
+			prefs.scrobbling = parseScrobbleConfig(s.lastfm_config).enabled;
+			prefs.musicVideos = s.music_videos === 'true';
+		})
+		.catch((e) => console.error('settings failed', e));
+}
+
+/**
+ * Limusic's toasts on the song title too, as Winamp says things, longer than its own messages so
+ * there's time to read them (an error longest). Every Winamp window passes its own on from a
+ * `$effect` on `ui.toast`: one with nowhere to draw them (or a floating library, which draws them
+ * too) would otherwise lose what Limusic says went wrong.
+ * @param {import('$lib/player.svelte').Toast | null} toast
+ */
+export function tickerToast(toast) {
+	if (toast) flashMarquee(toast.msg, toast.kind === 'error' ? 10_000 : 6_000);
 }
 
 /** The update dialog (UpdateWindow.svelte). */
@@ -262,6 +293,12 @@ const log = (/** @type {string} */ what) => (/** @type {unknown} */ e) => consol
  * @param {() => { w: number, h: number }} size for a window that's opening, if none is remembered
  */
 function syncFloating(kind, was, now, size) {
+	// The Media Library's window always opens at its default size (library.js).
+	if (kind === 'library') {
+		if (now && !was) openLibraryWindow().catch(log('open media library'));
+		else if (was && !now) api.closeWinampPanel(kind).catch(log('close media library'));
+		return;
+	}
 	if (now && !was) {
 		const { w, h } = pref(`floatSize-${kind}`, size());
 		api.openWinampPanel(kind, w * doubleFactor(), h * doubleFactor()).catch(log(`open ${kind} window`));
@@ -272,9 +309,14 @@ function syncFloating(kind, was, now, size) {
 
 /** Each panel's state, by kind. @param {import('./layout.js').PanelKind} kind */
 function viewOf(kind) {
-	return { search: uiState.search, playlist: uiState.pl, art: uiState.art, eq: uiState.eq, lyrics: uiState.lyrics }[
-		kind
-	];
+	return {
+		search: uiState.search,
+		playlist: uiState.pl,
+		art: uiState.art,
+		eq: uiState.eq,
+		lyrics: uiState.lyrics,
+		library: uiState.library
+	}[kind];
 }
 
 /** Remember where `kind` is (open, and docked where), for the next time Winamp mode opens.
@@ -297,21 +339,28 @@ const FLOAT_SIZE = {
  * the main window, or floating in a window of its own. The Winamp window grows/shrinks to match.
  * Opening the docked playlist scrolls the current track into view, like Winamp; opening docked
  * search focuses its text box (a floating panel does both in its own window).
- * @param {'search' | 'playlist' | 'eq' | 'lyrics'} kind
+ * @param {'search' | 'playlist' | 'eq' | 'lyrics' | 'library'} kind
  * @param {boolean} open
- * @param {'stack' | 'float' | 'right'} [dock] lyrics dock 'right', the others 'stack'
+ * @param {'stack' | 'float' | 'right'} [dock] lyrics and the library dock 'right', the others 'stack'
  */
 export function setPanelOpen(kind, open, dock) {
 	const view = viewOf(kind);
 	const was = view.open && view.dock === 'float';
 	view.open = open;
 	view.dock = dock ?? view.dock;
-	// Docked lyrics take the right side: album art there moves out to its own window.
-	if (kind === 'lyrics' && open && view.dock === 'right' && uiState.art.open && uiState.art.dock === 'right') {
+	const right = open && view.dock === 'right';
+	// Docked lyrics or library take the right side: album art there moves out to its own window.
+	if ((kind === 'lyrics' || kind === 'library') && right && uiState.art.open && uiState.art.dock === 'right') {
 		setArt(true, 'float');
 	}
+	// The docked library is as tall as the stack: search and the playlist give it the room.
+	if (kind === 'library' && right) {
+		for (const k of /** @type {const} */ (['search', 'playlist'])) {
+			if (!viewOf(k).open || viewOf(k).dock !== 'stack') setPanelOpen(k, true, 'stack');
+		}
+	}
 	const floating = open && view.dock === 'float';
-	syncFloating(kind, was, floating, () => FLOAT_SIZE[kind]);
+	syncFloating(kind, was, floating, () => FLOAT_SIZE[/** @type {keyof typeof FLOAT_SIZE} */ (kind)]);
 	if (open && !floating) {
 		if (kind === 'playlist') {
 			const current = playback.queue.currentIndex;
@@ -337,11 +386,19 @@ export function togglePanel(kind) {
 	setPanelOpen(kind, !viewOf(kind).open);
 }
 
-/** Grow or shrink the window to fit whatever is docked now (twice that in double size). */
+/** Grow or shrink the window to fit whatever is docked now (twice that in double size), on a
+ * screen measured afresh each time: docked panels narrow to fit it (layout.js). */
 export function resizeToLayout() {
-	const { width, height } = dockedLayout();
-	const f = uiState.doubleSize ? 2 : 1;
-	api.resizeWinamp(width * f, height * f).catch((e) => console.error('resize failed', e));
+	api
+		.winampWorkWidth()
+		.catch(() => null)
+		.then((w) => {
+			uiState.workWidth = w;
+			const { width, height } = dockedLayout();
+			const f = uiState.doubleSize ? 2 : 1;
+			return api.resizeWinamp(width * f, height * f);
+		})
+		.catch((e) => console.error('resize failed', e));
 }
 
 /** The floating album art window's picture when it first opens (if no size is remembered). */
@@ -464,8 +521,12 @@ export async function restorePrefs() {
 	const art = /** @type {Placement} */ (pref('panel-art', null));
 	if (art?.open) setArt(true, art.dock);
 	else if (art) uiState.art.dock = art.dock;
+	uiState.library.width = pref('libraryWidth', uiState.library.width);
+	// Open, floating, on a first run. (Build 10 remembered only whether its window was open.)
+	const library = /** @type {Placement} */ (pref('panel-library', { open: pref('libraryOpen', true), dock: 'float' }));
+	if (library?.open) setPanelOpen('library', true, library.dock);
+	else if (library) uiState.library.dock = library.dock;
 	resizeToLayout();
-	if (libraryWasOpen()) openLibrary().catch(log('media library'));
 	if (firstRun) queueLlama(true).catch(log('llama intro'));
 }
 

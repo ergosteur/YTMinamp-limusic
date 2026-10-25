@@ -4,6 +4,7 @@
 // pledit.txt. Coordinates: Webamp's skinSprites.ts PLEDIT table and playlist-window.css.
 
 import { drawText } from './marquee.js';
+import { CHAR_W, MARQUEE_SEPARATOR, MARQUEE_STEP_MS } from './sprites.js';
 import { isLit } from '../focus.js';
 import { uiState } from '../uiState.js';
 import { playback } from '$lib/player.svelte';
@@ -73,7 +74,7 @@ export function geometry(size = DOCKED) {
 		footer: { x: w - 150 + 7, y: h - BOTTOM_H + 10 },
 		/** The mini time to their right (Webamp's playlist-window.css .mini-time: 66, 23). */
 		miniTime: { x: w - 150 + 66, y: h - BOTTOM_H + 23, w: 31, h: 6 },
-		/** The bottom-right corner you drag to resize a floating panel. */
+		/** The bottom-right corner that resizes a floating panel when dragged. */
 		resize: { x: w - 20, y: h - 20, w: 20, h: 20 },
 		/** The playlist's bottom buttons (Webamp's playlist-window.css: 22x18, 12px up). */
 		buttons: {
@@ -201,6 +202,10 @@ export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED, welc
 	});
 }
 
+/** How long the pointer stays on a row before one too long for its line scrolls: about when its
+ * tooltip has come up. */
+const ROW_SCROLL_AFTER_MS = 1200;
+
 /**
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
@@ -311,11 +316,21 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 			? `${item.title}${item.artists ? ` — ${item.artists}` : ''}`
 			: `${item.artists ? `${item.artists} - ` : ''}${item.title}`;
 		const label = `${n}. ${text}`;
+		const room = LIST.w - durationW - 8;
 		ctx.save();
 		ctx.beginPath();
-		ctx.rect(LIST.x, y, LIST.w - durationW - 8, ROW_H);
+		ctx.rect(LIST.x, y, room, ROW_H);
 		ctx.clip();
-		ctx.fillText(label, LIST.x + 2, y + ROW_H / 2);
+		const hover = uiState.rowHover;
+		const read = hover?.kind === kind && hover.index === i ? performance.now() - hover.since - ROW_SCROLL_AFTER_MS : -1;
+		if (read >= 0 && ctx.measureText(label).width > room - 2) {
+			// Too long for its line and read for a while: round it goes, as the title does.
+			const loop = `${label}${MARQUEE_SEPARATOR}`;
+			const offset = (Math.floor(read / MARQUEE_STEP_MS) * CHAR_W) % ctx.measureText(loop).width;
+			ctx.fillText(`${loop}${label}`, LIST.x + 2 - offset, y + ROW_H / 2);
+		} else {
+			ctx.fillText(label, LIST.x + 2, y + ROW_H / 2);
+		}
 		ctx.restore();
 	}
 	ctx.restore();

@@ -11,7 +11,7 @@
 //! - `@eq`: Winamp's ten bands (`equalizer`) and preamp (`volume`), retuned live through mpv's
 //!   `af-command` as the sliders move;
 //! - `@viz`: splits off a mono copy, band-passes it once per analyzer bar, merges the bands back as
-//!   extra channels for `astats` to measure, and drops them again. What you hear passes through
+//!   extra channels for `astats` to measure, and drops them again. The audio itself passes through
 //!   untouched. Same on every OS, and only this app's audio, no OS capture. Read only while the
 //!   Winamp window is open; it costs about 7% of one core (`astats` over 21 channels).
 //!
@@ -24,7 +24,7 @@
 //! MilkDrop (Butterchurn) wants a waveform; there's none to be had, so it gets one made from the
 //! band levels (a tone per band), which carries the bass/mid/treble the presets react to.
 //!
-//! mpv filters audio before its output buffer, so the levels lead what you hear; they're held
+//! mpv filters audio before its output buffer, so the levels lead what plays; they're held
 //! back by about that buffer. No filter (a libmpv without these ffmpeg filters) just means no
 //! levels, and the UI falls back to test patterns.
 

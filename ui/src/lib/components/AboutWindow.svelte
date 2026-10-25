@@ -110,7 +110,7 @@
 				draw();
 			},
 			close,
-			resizable: true
+			resizable: 'about'
 		});
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
 			if (e.key === 'Escape') close();

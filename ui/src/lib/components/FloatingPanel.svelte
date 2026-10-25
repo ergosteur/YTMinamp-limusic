@@ -7,7 +7,7 @@
 	// toggle panels.
 	import { onMount } from 'svelte';
 	import { emitTo, listen } from '@tauri-apps/api/event';
-	import { playback } from '$lib/player.svelte';
+	import { playback, ui } from '$lib/player.svelte';
 	import { resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
@@ -33,7 +33,8 @@
 		loadSkin,
 		playIndex,
 		searchKeydown,
-		searchWelcome
+		searchWelcome,
+		tickerToast
 	} from '../skin/skinApi.js';
 	import { requestMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
@@ -73,6 +74,8 @@
 			.catch((e) => console.error('dock request failed', e));
 
 	const onSearchKey = (/** @type {KeyboardEvent} */ e) => searchKeydown(e, searchInput, size(), () => dockTo(null));
+
+	$effect(() => tickerToast(ui.toast));
 
 	onMount(() => {
 		// For the search welcome's sign-in hint.

@@ -234,7 +234,7 @@
 				draw();
 			},
 			close,
-			resizable: true
+			resizable: 'fileinfo'
 		});
 		const onKey = (/** @type {KeyboardEvent} */ e) => {
 			if (e.key === 'Escape') return close();
@@ -355,7 +355,7 @@
 							</svg>
 						</button>
 						<!-- Without a token, nothing: YouTube leaves the option out for a song that's already in
-						     one of your playlists (its own apps too), so "not in library" would often be wrong. -->
+						     one of the user's playlists (its own apps too), so "not in library" would often be wrong. -->
 						{#if canSave}
 							{#if saved}<span class="shrink-0 opacity-70">In library</span>{/if}
 							{@render button(saved ? 'Remove from library' : 'Add to library', () => librarySong && toggleSongLibrary(librarySong))}

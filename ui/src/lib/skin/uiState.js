@@ -15,6 +15,12 @@ export const uiState = {
 	alwaysOnTop: false,
 	/** The clutterbar's D: the Winamp window drawn at 2x (pixels.js `setScale`). */
 	doubleSize: false,
+	/** The playlist or search row under the pointer, and since when (input.js): one too long for
+	 * its line scrolls like the title once its tooltip is up (render/playlist.js). */
+	rowHover: /** @type {{ kind: 'playlist' | 'search', index: number, since: number } | null} */ (null),
+	/** The screen's width less panels, in logical px, as of the last resize (skinApi.js): docked
+	 * panels narrow to fit it (layout.js). Null until known, or where the platform can't say. */
+	workWidth: /** @type {number | null} */ (null),
 	draggingSeek: false,
 	/** Optimistic position while the seek-bar thumb is being dragged, before `seekTo` lands. */
 	draggingPositionSecs: 0,
@@ -77,6 +83,16 @@ export const uiState = {
 		zoom: 1,
 		/** Docked lyrics' width: dragged from their right edge (input.js), remembered. */
 		width: 275,
+		closePressed: false
+	},
+	/** The Media Library: Limusic's pages, floating in a window of their own (MediaLibraryWindow)
+	 * or docked right of the stack, left of lyrics, as tall as the stack (layout.js). */
+	library: {
+		open: false,
+		dock: /** @type {'right' | 'float'} */ ('float'),
+		/** Docked width: dragged from the right edge (input.js), remembered as libraryWidth. At
+		 * first that of its floating window (library.js LIBRARY_SIZE). */
+		width: 760,
 		closePressed: false
 	},
 	/** The album art window: beside the main window (left/right), in the stack below, or floating

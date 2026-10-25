@@ -813,6 +813,12 @@ pub fn winamp_fits(app: tauri::AppHandle, width: f64, height: f64) -> bool {
     crate::winamp::fits(&app, width, height)
 }
 
+/// How wide the Winamp window's screen is, less panels (docked panels narrow to fit it).
+#[tauri::command]
+pub fn winamp_work_width(app: tauri::AppHandle) -> Option<f64> {
+    crate::winamp::work_width(&app)
+}
+
 /// The remembered skin, parsed into sprite sheets (PNG-encoded) + window shape/colors for the
 /// Winamp UI. Falls back to the built-in skin.
 #[tauri::command]

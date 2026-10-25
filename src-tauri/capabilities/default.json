@@ -17,7 +17,8 @@
     "winamp-fileinfo",
     "winamp-about",
     "winamp-update",
-    "winamp-library"
+    "winamp-library",
+    "winamp-newpl"
   ],
   "permissions": [
     "core:default",

@@ -20,8 +20,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 12] = [
+pub const PANELS: [&str; 13] = [
     "art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about", "update", "library",
+    "newpl",
 ];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
@@ -51,19 +52,12 @@ pub fn window_labels() -> impl Iterator<Item = String> {
 }
 
 /// Put a Winamp window back where it was last left, as the window-state plugin recorded it
-/// (lib.rs), and at its last size too if `size`. Only where windows can be placed: native Wayland
-/// lets the compositor choose. The rest of their sizes are the skin's, set by the UI.
-fn restore_place(win: &tauri::WebviewWindow, size: bool) {
+/// (lib.rs). Only where windows can be placed: native Wayland lets the compositor choose. Their
+/// sizes are the UI's: the skin's, the panels' remembered ones, the Media Library's default.
+fn restore_place(win: &tauri::WebviewWindow) {
     use tauri_plugin_window_state::{StateFlags, WindowExt};
-    let mut flags = StateFlags::empty();
     if positions_known() {
-        flags |= StateFlags::POSITION;
-    }
-    if size {
-        flags |= StateFlags::SIZE;
-    }
-    if !flags.is_empty() {
-        let _ = win.restore_state(flags);
+        let _ = win.restore_state(StateFlags::POSITION);
     }
 }
 
@@ -101,7 +95,7 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
         });
         #[cfg(target_os = "linux")]
         crate::tune_webview_labelled(app, LABEL, false);
-        restore_place(&win, false);
+        restore_place(&win);
         let _ = win.show();
         let _ = win.set_focus();
     }
@@ -151,6 +145,12 @@ pub fn fits(app: &AppHandle, width: f64, height: f64) -> bool {
     app.get_webview_window(LABEL)
         .and_then(|w| work_area(&w))
         .map_or(true, |(_, size)| width <= size.width && height <= size.height)
+}
+
+/// How wide the Winamp window's screen is, less panels and docks, in logical px: docked panels
+/// narrow to fit it (layout.js). None when the platform can't say.
+pub fn work_width(app: &AppHandle) -> Option<f64> {
+    app.get_webview_window(LABEL).and_then(|w| work_area(&w)).map(|(_, size)| size.width)
 }
 
 /// The window's monitor's work area (the screen minus panels and docks), in logical px.
@@ -214,31 +214,24 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "about" => "About YTMinamp",
         "update" => "YTMinamp Update",
         "library" => "Media Library",
+        "newpl" => "New Playlist",
         _ => "Search",
     };
     // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a
     // non-resizable window to the screen, and switching resizable on just before the fullscreen
     // request races the compositor (it fullscreens at the old size, about nine times in ten).
-    // The Media Library, File info and About resize from their frame's edges (frameWindow.js),
-    // down to a size their frame and contents still fit.
-    let min_size = match panel {
-        "library" => Some((400.0, 300.0)),
-        "fileinfo" => Some((300.0, 150.0)),
-        "about" => Some((300.0, 200.0)),
-        _ => None,
-    };
-    let mut win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+    // The Media Library, File info and About resize too, from their frame's right and bottom
+    // edges, but the UI does that itself (frameWindow.js), as the floating panels' corner does:
+    // made resizable here, Tauri would add its own resize border on every side, the top included.
+    let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(width, height)
-        .resizable(panel == "milkdrop" || min_size.is_some())
+        .resizable(panel == "milkdrop")
         .decorations(false)
         .transparent(true)
         .shadow(false)
         .always_on_top(always_on_top(app))
         .visible(false);
-    if let Some((w, h)) = min_size {
-        win = win.min_inner_size(w, h);
-    }
     let win = crate::http::proxied(win)
         .build()
         .map_err(|e| format!("couldn't open the {title} window: {e}"))?;
@@ -268,11 +261,37 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
             let _ = handle.emit_to(LABEL, PANEL_CLOSED_EVENT, &name);
         }
     });
-    // The Media Library's size is the user's; the others' are the skin's or their own prefs.
-    restore_place(&win, panel == "library");
+    // Where it was: its size is the UI's to give (the skin's, its prefs, or the library's default).
+    restore_place(&win);
     let _ = win.show();
     let _ = win.set_focus();
+    fit_on_screen(&win);
     Ok(())
+}
+
+/// Shrink a floating window to its screen once it's on one. A size remembered from a bigger
+/// monitor would put its resize edges or corner out of reach, and on Wayland the compositor picks
+/// the monitor, so this can only be known after it's shown. Windows that fit are left alone.
+fn fit_on_screen(win: &tauri::WebviewWindow) {
+    /// Room left round it when it has to shrink: clear of a panel or dock along an edge, which
+    /// Wayland's work area doesn't subtract.
+    const MARGIN: f64 = 48.0;
+    let win = win.clone();
+    tauri::async_runtime::spawn(async move {
+        // Until it's mapped, a window has no monitor.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let (Some((_, area)), Ok(size), Ok(scale)) = (work_area(&win), win.outer_size(), win.scale_factor()) else {
+            return;
+        };
+        let size = size.to_logical::<f64>(scale);
+        if size.width <= area.width && size.height <= area.height {
+            return;
+        }
+        let w = size.width.min(area.width - MARGIN);
+        let h = size.height.min(area.height - MARGIN);
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+        keep_on_screen(&win, w, h);
+    });
 }
 
 /// Take `panel`'s floating window down, if it's up. Callable from any thread.
@@ -313,7 +332,7 @@ pub struct MenuEntry {
     id: Option<String>,
     checked: Option<bool>,
     items: Option<Vec<MenuEntry>>,
-    /// Shown greyed out when false ("No playlists in your library").
+    /// Shown greyed out when false ("No playlists in the library").
     enabled: Option<bool>,
     /// Its shortcut, shown right-aligned like Winamp's ("Ctrl+L", "Alt+E", "Z", "Left"). Only
     /// shown: the page handles the keys.

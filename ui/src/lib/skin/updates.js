@@ -22,11 +22,12 @@ function after(/** @type {number[]} */ a, /** @type {number[]} */ b) {
 /**
  * Updater's `look()` for ytminamp: sets `state.available` to a newer release, if one is out.
  * @param {{ available: { version: string; rollback: boolean } | null; canInstall: boolean }} state
+ * @param {boolean} [fresh] ask GitHub now rather than reuse a recent answer (Check for updates)
  * @returns {Promise<boolean>} whether one is available
  */
-export async function lookForRelease(state) {
+export async function lookForRelease(state, fresh = false) {
 	const current = fullVersion(await getVersion());
-	const tag = /** @type {string | null} */ (await invoke('latest_release'));
+	const tag = /** @type {string | null} */ (await invoke('latest_release', { fresh }));
 	const latest = tag && releaseKey(tag);
 	const ours = releaseKey(current);
 	if (!tag || !latest || !ours || !after(latest, ours)) return false;

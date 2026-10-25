@@ -77,7 +77,7 @@ aformat=stereo, asplit → [music] + [mono copy] → asplit into 19 → bandpass
 → amerge(music, 19 bands) → astats (RMS per channel, per frame) → pan back to the music's two channels
 ```
 
-What you hear passes through untouched; the band levels ride along as metadata, read about 60
+The audio passes through untouched; the band levels ride along as metadata, read about 60
 times a second (mpv runs the graph as its audio output asks for more: about 60 Hz on PipeWire,
 47 on PulseAudio). It's the same on Linux, Windows and macOS, and it shows only this app's audio.
 It costs roughly 7% of one core, mostly `astats` measuring 21 channels, from the first time the
@@ -98,7 +98,7 @@ right-click menu (**Analyser levels**, remembered as `vizLevels`):
   What builds 5 to 7 showed.
 
 Both measure the music before the volume control, as Winamp's analyzer does. mpv filters
-ahead of its output buffer, so the levels are held back 0.2 s to line up with what you hear.
+ahead of its output buffer, so the levels are held back 0.2 s to line up with what plays.
 Falloff and peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from the
 skin's `viscolor.txt` (stock Winamp palette for missing slots). Click the analyzer to turn it
 off/on.
@@ -152,7 +152,7 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 | ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Browse library…** (the Media Library at its Library page), or **Open YouTube URL…**: a small dialog (`OpenUrlWindow.svelte`; Enter or OK) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio |
 | REM | Remove the selected track, or clear the queue |
 | SEL | Select all, none, or invert the selection, as in Winamp (Ctrl/Shift+click selects several) |
-| MISC | Sort what plays next by title or artist, or reverse it |
+| MISC | Sort what plays next by title or artist, or reverse it; Autoplay (Limusic's: more like it when the queue runs out) |
 | LIST | **Load ▸** a playlist (local and YouTube Music sections; replaces the queue), or **Save ▸** the queue as one, in the YouTube Music library (signed in) or only on this machine. Some skins label it LOAD LIST |
 
 LIST and the main menu's Play ▸ never wait on YouTube Music: they show the playlists as last
@@ -210,9 +210,9 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 
 | Right-click | Menu |
 |---|---|
-| A playlist row | Play, Play next (moves it up), Add to queue (another copy at the end); Remove selected (Delete), Crop to selected (Ctrl+Delete); View file info... (Alt+3); Rate items ▸; then Limusic's: Start radio, Go to artist, Go to album, Copy link, Open in YouTube Music |
-| A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸; then Limusic's: Start radio (songs, albums, playlists), Go to artist / album (songs), Copy link, Open in YouTube Music |
-| The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸; then Limusic's, for the playing track |
+| A playlist row | Play, Play next (moves it up), Add to queue (another copy at the end); Remove selected (Delete), Crop to selected (Ctrl+Delete); View file info... (Alt+3); Rate items ▸, Add to library, Add to existing playlist ▸, Add to new playlist...; then Limusic's: Show in Media Library (its album), Show artist in Media Library, Start radio, Copy link, Open in YouTube Music |
+| A search result | Play, Play next, Add to queue; View file info... (Alt+3); Rate items ▸ (songs), Add to library, Add to existing playlist ▸, Add to new playlist... (songs, albums, playlists); then Limusic's: Show in Media Library (its page; a song's album), Show artist in Media Library (songs), Shuffle and Subscribe (artists), Start radio (songs, albums, playlists), Copy link, Open in YouTube Music |
+| The song title | View file info... (Alt+3 or double-click), Lyrics; Jump to file... (J, our search); Autoscroll songname; Rating ▸, Add to library, Add to existing playlist ▸, Add to new playlist...; then Limusic's, for the playing track |
 | The analyzer | Start/Stop plug-in (Ctrl+Shift+K, MilkDrop); Run the plug-in on start-up; the plug-in list (MilkDrop); Spectrum analyser / Off |
 | The Stop button | Stop (V), Stop w/ fadeout (Shift+V), Stop after current (Ctrl+V; Ctrl+click Stop does it too) |
 | File info | Bigger text, Smaller text, Normal size; Copy link, Open in browser |
@@ -222,17 +222,36 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 | Anywhere else | The main menu: About; Play ▸; View file info... (the playing track); Media Library (Alt+L), Limusic window (Alt+M), the panels; Options ▸ (Preferences... first, Ctrl+P: Limusic's settings, in its window), Playback ▸, Visualisation ▸, Skins ▸, Window Settings ▸; Back to Limusic, Exit |
 
 Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
-title, then artist, album and length, a line each.
+title, then artist, album and length, a line each. A playlist or search row too long for its line
+then scrolls like the title, 1.2 s after the pointer stops on it (about when the tooltip comes up),
+until the pointer moves off it or the list scrolls (`uiState.rowHover`).
+
+What Limusic says in a toast (added to a playlist, partly or not at all, a library change, an
+error) shows on the song title too, for 6 s (an error 10 s): every Winamp window passes its toasts
+to the Winamp window's ticker (`tickerToast`), and the Media Library still shows them as toasts
+as well. The menus leave the telling to Limusic where its call does it.
 
 Winamp's own entries come first, in its order; what Limusic adds follows in a group of its own.
-Go to artist / album open the Media Library at that page. Limusic's Share lives in its own window, so here it's Copy link and Open in YouTube Music.
+Show in Media Library opens the Media Library at the item's page; a song has none, so it's the
+song's album (Limusic's Go to album), and Show artist in Media Library its artist's (Go to artist). Limusic's Share lives in its own window, so here it's Copy link and Open in YouTube Music.
 
 A right-click inside a selection acts on all of it; outside, it selects that row first. Rate
-items ▸ (Rating ▸ on the title) holds Like / Dislike / No rating, Add to (or Remove from) library,
-and Add to existing playlist ▸, all Limusic's own (`setRating`, `toggleSongLibrary`,
-`addSongsToPlaylists`), so they show in Limusic too. The library move needs the token YouTube
-sends with a row, so it's greyed out for rows without one; On Repeat and Liked Music aren't
-offered as playlists to add to. The Winamp
+items ▸ (Rating ▸ on the title) holds Like / Dislike / No rating (`setRating`). Beside it, Add to
+(or Remove from) library and Add to existing playlist ▸ are Limusic's own (`toggleSongLibrary`,
+`addSongsToPlaylists`; for albums and playlists its card menu's `addToLibrary` /
+`removeFromLibrary`, and their tracks, fetched when a playlist is picked), so they show in Limusic
+too. A song's library move needs the token YouTube sends with a row, so it's greyed out for rows
+without one, and songs mixed with albums can't move together. Only playlists that take songs are
+offered to add to (`addablePlaylists`): this machine's and yours by Limusic's owner-name check
+(`ownedByUser`) at once, and the rest as their own page says (`owned` or `collaborative`), asked
+two at a time behind the menus when the library list comes in and remembered for the run; a menu
+waits 0.8 s at most for answers still coming. Never ones saved from others, On Repeat or Liked
+Music. The Winamp windows start without loading the account (Limusic's mini-window path), so
+the menus load it first (`knowAccount`). Add to new playlist... asks for a name in a small window of its
+own (`NewPlaylistWindow.svelte`; the window whose menu asked makes it, `newPlaylist.js`), and
+where: the account or this machine, a pick it shares with Limusic's New playlist dialog (this
+machine only, signed out or with files on disk). An artist's Shuffle and
+Subscribe are its page's (its whole top-songs list; the subscribe button's channel). The Winamp
 logo at the bottom right opens About.
 
 **File info** (`FileInfoWindow.svelte`, window `winamp-fileinfo`): the cover, title, artist,
@@ -240,13 +259,13 @@ album, release (Album, EP or Single, and the year), track number ("3 of 12"), le
 who added or queued it, and the video ID, with Copy link and Open in browser. A song also gets a
 like heart (Limusic's `toggleRating`, no dislike here) and its library state with Add to / Remove
 from library (Limusic's `toggleSongLibrary`), when YouTube sent the token for it with the row or
-the song's album page row. It leaves that out for a song already in one of your playlists (its
+the song's album page row. It leaves that out for a song already in one of the user's playlists (its
 own apps show no "Save to library" then either), so without one File info shows nothing; its artist and
 album open their pages in the Media Library. A song with a
 linked album gets those from the album's page (fetched once per album); a music video has no
 album, so it shows what its row carries. Its right-click menu (Bigger text, Smaller text, Normal
 size), Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel or a pinch zoom the text, the window growing with it
-(remembered as `fileInfoZoom`); its sides and bottom resize it too, as About's do. Pinches arrive as Safari's gesture events on macOS and as
+(remembered as `fileInfoZoom`); its right and bottom edges resize it too, as About's do. Pinches arrive as Safari's gesture events on macOS and as
 Ctrl+wheel on Windows (`pixels.js` `onPinch`); lyrics take them too. The track reaches the window
 through localStorage (`showFileInfo` in `skinApi.js`), which every window shares, so an open File
 info window follows the next one shown.
@@ -313,10 +332,10 @@ one-octave `equalizer` per band at Winamp's 60 Hz-16 kHz, ±12 dB), and every sl
 it live through mpv's `af-command` (`Player::af_command`), so nothing rebuilds and nothing clicks.
 OFF flattens it. AUTO (loading a preset per track) is remembered but not acted on.
 
-PRESETS lists your own presets first (click to load), then Winamp's built-in ones in a submenu,
+PRESETS lists the user's own presets first (click to load), then Winamp's built-in ones in a submenu,
 **Save current as preset...** (a small naming dialog in the skin's frame, `EqPresetWindow.svelte`,
 window `winamp-eqsave`; an existing name is replaced), **Delete preset** and **Reset (flat)**.
-Your presets are kept in `winamp.json` as `eqPresets` (name, preamp and ten bands, 0-100 like
+Saved presets are kept in `winamp.json` as `eqPresets` (name, preamp and ten bands, 0-100 like
 the sliders). The dialog writes them straight away (`flushPrefs`) rather than in the usual
 batch, since it closes at once.
 
@@ -346,15 +365,15 @@ skin's.
 
 ## Remembered state
 
-`winamp.json`'s `ui` object (`prefs.js`, `winamp::merge_ui_prefs`): where each panel is, the EQ,
-double size, always on top, the time display, the analyzer, each floating window's size, whether
-the Media Library is open (`libraryOpen`). Each window saves the keys it changes and Rust merges
-per key.
+`winamp.json`'s `ui` object (`prefs.js`, `winamp::merge_ui_prefs`): where each panel is
+(`panel-<kind>`, the Media Library's included), the EQ, double size, always on top, the time
+display, the analyzer, each floating window's size. Each window saves the keys it changes and
+Rust merges per key.
 
-Window positions, and the Media Library's size, are Limusic's window-state plugin's
-(`.window-state.json`), which now tracks the Winamp windows as well; `winamp::restore_place` puts
-each back when it opens. Only where an app can place its windows: on native Wayland the
-compositor decides, so positions aren't restored there (sizes are).
+Window positions are Limusic's window-state plugin's (`.window-state.json`), which now tracks the
+Winamp windows as well; `winamp::restore_place` puts each back when it opens. Only where an app
+can place its windows: on native Wayland the compositor decides. A floating window that opens
+bigger than its screen (a size from a bigger monitor) is shrunk to fit (`winamp::fit_on_screen`).
 
 ## Album art
 
@@ -404,13 +423,26 @@ Code: `ui/src/lib/components/AlbumArtWindow.svelte`, `FloatingListPanel.svelte`.
 
 ## Media Library
 
-Not Winamp's own library re-created, on purpose: Limusic's pages are the library. Alt+L, the main
-menu's **Media Library**, Go to artist / album, File info's links and the playlist's Browse
-library… open a window of its own (`winamp-library`, `MediaLibraryWindow.svelte`) with Limusic's
-sidebar, pages and titlebar inside the skin's generic frame titled MEDIA LIBRARY. Dragged by its
-titlebar, resized from its sides and bottom (not the top: that's the titlebar's), closed with ✕,
-Escape or Alt+L; it reopens with Winamp mode if it was open when the app quit, at its last size.
+Not Winamp's own library re-created, on purpose: Limusic's pages are the library
+(`LibraryPages.svelte`: its titlebar as a toolbar, its sidebar and pages), in the skin's generic
+frame titled MEDIA LIBRARY. Alt+L, the main menu's **Media Library**, Show (artist) in Media
+Library, File info's links and the playlist's Browse library… show it where it was last: floating (the
+default) or docked. The Winamp window owns where it is, like every panel (`setPanelOpen`); other
+windows ask it (`library.js`). It reopens with Winamp mode if it was showing when the app quit.
 
+- **Floating:** a window of its own (`winamp-library`, `MediaLibraryWindow.svelte`), always opened
+  at 760×520 (smaller on a smaller screen). Dragged by its titlebar, resized from its right and
+  bottom edges (`frameWindow.js` sizes it each frame, like the floating panels' corner; resizable
+  to GTK, Tauri would add a border on every side, the titlebar's top included), closed with ✕,
+  Escape or Alt+L.
+- **Docked:** a titlebar double-click either way moves it, at the page it shows. Docked, it's
+  drawn in the Winamp window right of the stack and left of docked lyrics, exactly as tall as the
+  stack (docking opens search and the playlist for the room), 760 px wide (its floating window's)
+  until dragged from its right edge (480–1600, remembered as `libraryWidth`). Too wide for the
+  screen, docked lyrics narrow first, to 380, then the library, to 480 (`dockedLayout`, from
+  the screen's work area as of the last resize; the widths asked for stay); album art can't sit right of the main
+  window then. The Winamp window renders its own route's page in it (`+layout.svelte` hands
+  `children` to `WinampSkin.svelte`), at normal size in double size.
 - **Colours:** Limusic's theme tokens set from the skin's `genex.bmp` (`libraryTheme.js`): lists
   and pages in the item colours, the sidebar and popovers in the window's, the selection colour
   as the accent, square corners, Limusic's dark styles when the lists are dark. Each text colour
@@ -542,16 +574,21 @@ TAURI_FRONTEND_PATH=ui cargo tauri dev
 ```
 
 `TAURI_FRONTEND_PATH=ui` matters: the repo also contains Limusic's marketing site (`website/`),
-and tauri-cli's frontend auto-detection can pick that instead, leaving you staring at the wrong
+and tauri-cli's frontend auto-detection can pick that instead, which serves the wrong
 Vite server.
 
 ### A native Fedora binary (no Nix)
 
 ```bash
-scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminamp
+scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminamp (symbols kept)
 ./dist/ytminamp
-scripts/build-fedora.sh rpm  # the same, plus dist/ytminamp-<version>-<N>.x86_64.rpm
+scripts/build-fedora.sh rpm  # stripped, plus dist/ytminamp-<version>-<N>.x86_64.rpm
 ```
+
+The plain build also packs the same unstripped binary as `dist/ytminamp-debug.x86_64.rpm`, to
+install on another Fedora (`packaging/fedora/ytminamp-debug.spec`, which reads its version,
+descriptions and dependencies from `tauri.conf.json`). It's made by `rpmbuild`, in seconds:
+Tauri's bundler took over eight minutes on the 170 MB binary. Release RPMs stay Tauri's.
 
 N is the build number (see [Releases](#releases)). Cargo's build directory is a podman volume
 per checkout (`ytminamp-target-<directory name>`): every checkout mounts at the same path in the
@@ -590,8 +627,8 @@ error and the app aborts.
 
 Development happens in a private git repository, synced to
 [ergosteur/YTMinamp-limusic](https://github.com/ergosteur/YTMinamp-limusic), a GitHub fork of
-Limusic: its `ytminamp` branch (the default) carries Winamp mode, one commit per sync, and its
-`master` stays upstream Limusic.
+Limusic: its `ytminamp` branch (the default) carries Winamp mode, one commit per sync;
+`upstream-master` is Limusic as this is based on it (1.3.0) and `upstream-dev` Limusic's `dev`.
 
 ### Releases
 

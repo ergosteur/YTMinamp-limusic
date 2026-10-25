@@ -1052,6 +1052,7 @@ pub fn run() {
             commands::close_winamp,
             commands::resize_winamp,
             commands::winamp_fits,
+            commands::winamp_work_width,
             commands::load_wsz_skin,
             commands::select_wsz_skin,
             commands::list_wsz_skins,

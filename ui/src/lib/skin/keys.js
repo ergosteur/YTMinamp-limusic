@@ -140,7 +140,7 @@ export function runKey(action) {
 		case 'lyricsBigger':
 		case 'lyricsSmaller':
 		case 'lyricsReset':
-			// Only with the lyrics showing: a size change you can't see is a confusing one.
+			// Only with the lyrics showing: an unseen size change is a confusing one.
 			if (uiState.lyrics.open) zoomLyrics(action === 'lyricsBigger' ? 1 : action === 'lyricsSmaller' ? -1 : 0);
 			return;
 		case 'milkdrop':
