@@ -48,6 +48,9 @@ export const uiState = {
 	startInWinamp: true,
 	/** Scroll a song title too long for its box (the title's right-click menu); off: cut it short. */
 	marqueeScroll: true,
+	/** Draw the title in the skin's text.bmp when every character is in it, as Winamp 5's "Use
+	 * bitmap font for main title display" (Options); off, always the TrueType font. */
+	bitmapTitle: false,
 	/** Open MilkDrop whenever the Winamp window opens (the analyzer's right-click menu). */
 	milkdropOnStart: false,
 	/** The MilkDrop window (Butterchurn) is open. */
@@ -103,6 +106,9 @@ export const uiState = {
 		dock: /** @type {import('./uiState.js').ArtDock} */ ('float'),
 		/** The album name shown under the picture (its right-click menu; remembered as artCaption). */
 		caption: false,
+		/** Beside the player: as tall as the main window and the EQ under it, not the main window
+		 * alone, when the EQ is docked there (its bottom edge, or Height; remembered as artTall). */
+		tall: false,
 		/** Which frame the skin gets: gen.bmp, or the EQ-window fallback. Set on skin load. */
 		frame: /** @type {import('./render/albumArt.js').ArtFrame} */ ('gen'),
 		closePressed: false

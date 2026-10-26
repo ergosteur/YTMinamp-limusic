@@ -1053,9 +1053,13 @@ pub fn run() {
             commands::resize_winamp,
             commands::winamp_fits,
             commands::winamp_work_width,
+            commands::winamp_to_tray,
+            commands::winamp_close,
             commands::load_wsz_skin,
             commands::select_wsz_skin,
             commands::list_wsz_skins,
+            commands::preview_wsz_skin,
+            commands::winamp_start_drag,
             commands::import_wsz_skin,
             commands::open_skins_dir,
             commands::winamp_audio_info,
@@ -1194,10 +1198,15 @@ pub fn run() {
                     }
                     // Nothing in the widget closes it, but a WM shortcut still can. Turn that into
                     // the ordinary "back to the app" path — closing it on its own would leave the
-                    // app running with no window at all. Winamp mode gets the same treatment.
-                    mini::LABEL | winamp::LABEL => {
+                    // app running with no window at all.
+                    mini::LABEL => {
                         api.prevent_close();
                         tray::show_main(window.app_handle());
+                    }
+                    // Winamp mode's Alt+F4 is its ✕: to the tray, or quit.
+                    winamp::LABEL => {
+                        api.prevent_close();
+                        winamp::close_requested(window.app_handle());
                     }
                     _ => {}
                 }
@@ -1252,7 +1261,7 @@ fn only_ui<R: tauri::Runtime>(
 ///
 /// Gated by [`tray::available`] at the call site: with no tray to click, hiding would strand the
 /// app with no window (#232).
-fn close_hides(setting: Option<&str>) -> bool {
+pub(crate) fn close_hides(setting: Option<&str>) -> bool {
     setting != Some("false")
 }
 

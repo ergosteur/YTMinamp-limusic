@@ -3,10 +3,9 @@
 	// +layout.svelte and winamp.rs). The Winamp window owns whether it exists and where it docks;
 	// this one just draws the cover in the skin's frame and asks that window to dock or hide it.
 	import { onMount } from 'svelte';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { playback } from '$lib/player.svelte';
-	import { resizeWinampPanel } from '$lib/api';
+	import { resizeWinampPanel, winampStartDrag } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { artFrame, artSize, drawAlbumArt, frameInset, onCloseButton } from '../skin/render/albumArt.js';
@@ -98,9 +97,11 @@
 			}
 		};
 		const onMove = (/** @type {MouseEvent} */ e) => {
+			// No drag from a press whose release never came (see frameWindow.js): it never ends on macOS.
+			if (press && !(e.buttons & 1)) press = null;
 			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
 				press = null;
-				getCurrentWindow().startDragging();
+				winampStartDrag().catch(() => {});
 			}
 			// Released outside the window (the drag outran it): no mouseup comes, so end it here.
 			if (resize && !(e.buttons & 1)) return onUp(e);

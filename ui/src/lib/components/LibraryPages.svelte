@@ -21,8 +21,10 @@
 	import ChannelPicker from './ChannelPicker.svelte';
 	import AddToPlaylist from './AddToPlaylist.svelte';
 	import CommandPalette from './CommandPalette.svelte';
+	import ImportDialog from './ImportDialog.svelte';
 	import KeyboardShortcuts from './KeyboardShortcuts.svelte';
 	import LinkDialog from './LinkDialog.svelte';
+	import ListenTogether from './ListenTogether.svelte';
 	import NewPlaylistDialog from './NewPlaylistDialog.svelte';
 	import ShareDialog from './ShareDialog.svelte';
 	import { loadSkin } from '../skin/skinApi.js';
@@ -43,6 +45,33 @@
 	// Limusic's titlebar as the library's toolbar, without its window buttons: the frame has its
 	// own ✕, and nothing here reads this otherwise (Limusic's window, which does, sets its own).
 	win.chrome = 'on';
+
+	// The sidebar starts compact here, and keeps a setting of its own: Limusic's (`sidebar_collapsed`,
+	// written by its toggleSidebar) is its window's. A toggle here puts Limusic's back as it was
+	// (as last heard of, when Limusic's window changes it).
+	const SIDEBAR_KEY = 'ytminamp_library_sidebar_collapsed';
+	/** @param {() => unknown} f */
+	const quietly = (f) => {
+		try {
+			return f();
+		} catch {
+			return null;
+		}
+	};
+	let limusicSidebar = /** @type {string | null} */ (quietly(() => localStorage.getItem('sidebar_collapsed')));
+	ui.sidebarCollapsed = quietly(() => localStorage.getItem(SIDEBAR_KEY)) !== '0';
+	$effect(() => {
+		const collapsed = ui.sidebarCollapsed;
+		quietly(() => {
+			localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+			if (limusicSidebar === null) localStorage.removeItem('sidebar_collapsed');
+			else localStorage.setItem('sidebar_collapsed', limusicSidebar);
+		});
+	});
+	/** @param {StorageEvent} e */
+	const onStorage = (e) => {
+		if (e.key === 'sidebar_collapsed') limusicSidebar = e.newValue;
+	};
 
 	onMount(() => {
 		const stopPages = initLibraryPages();
@@ -68,7 +97,9 @@
 			e.preventDefault();
 		};
 		window.addEventListener('keydown', onKey);
+		window.addEventListener('storage', onStorage);
 		return () => {
+			window.removeEventListener('storage', onStorage);
 			stopPages();
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('keydown', onKey);
@@ -89,7 +120,7 @@
 </div>
 
 <!-- What Limusic's window has around its pages for them (+layout.svelte), less what's its window's
-     alone (settings, Listen Together, the importer, the player). -->
+     alone (settings, theater, the player). -->
 <CommandPalette />
 <ChannelPicker />
 <KeyboardShortcuts />
@@ -97,6 +128,8 @@
 <NewPlaylistDialog />
 <ShareDialog />
 <LinkDialog />
+<ImportDialog />
+<ListenTogether />
 
 <!-- Limusic's toast, as its window shows it. -->
 {#if ui.toast}
@@ -120,21 +153,23 @@
 	/* Limusic's sidebar, as it is, less three things that are Limusic's window's: its wordmark (the
 	   frame's title says what this is), its light/dark switch (the skin decides that here, and the
 	   switch would flip Limusic's own window too) and Settings (its dialog lives in Limusic's
-	   window; Options ▸ Preferences opens it). By position in Sidebar.svelte. */
+	   window; Options ▸ Preferences opens it). By position in Sidebar.svelte (checked by
+	   ytminamp-chrome.check.ts). */
 	.library-pages > div > :global(aside > div:first-child > span:first-child),
 	.library-pages > div > :global(aside > div:first-child > div > button:last-child),
 	.library-pages > div > :global(aside > nav > button) {
 		display: none !important;
 	}
-	/* Limusic's titlebar as a toolbar: back, forward, refresh, the account, Open link, Discord and
-	   Last.fm. Not the app's icon and name (the frame's title is this window's), Listen Together
-	   (its dialog is Limusic's window's), theater mode, the mini player or Winamp mode. By position
-	   in Titlebar.svelte: its right group's buttons are the account, link, Listen Together,
-	   Discord, Last.fm, theater, mini player, Winamp. */
+	/* Limusic's titlebar as a toolbar: back, forward, refresh, the account, Open link, Listen
+	   Together, Discord and Last.fm. Not the app's icon and name (the frame's title is this
+	   window's), theater mode, the mini player or Winamp mode. By position in Titlebar.svelte: its
+	   right group's buttons are the account, link, Listen Together, Discord, Last.fm, theater, mini
+	   player, Winamp, and the last three go. Counted from the end, because the account menu's
+	   backdrop, while open, is a button after the account's. ytminamp-chrome.check.ts (pnpm test)
+	   fails if any of these move. */
 	.library-pages > :global(header > span:first-child),
 	.library-pages > :global(header > div:first-of-type > img),
-	.library-pages > :global(header > div:last-child > button:nth-of-type(3)),
-	.library-pages > :global(header > div:last-child > button:nth-of-type(n + 6)) {
+	.library-pages > :global(header > div:last-child > button:nth-last-of-type(-n + 3)) {
 		display: none !important;
 	}
 	/* The account as its picture and arrow alone: no name. Limusic shows the arrow only in a wide

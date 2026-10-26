@@ -33,7 +33,6 @@ import {
 	noteLibrary,
 	ownedByUser,
 	playback,
-	playFrom,
 	prefs,
 	setAutoplay,
 	ratingOf,
@@ -48,6 +47,8 @@ import {
 	nextTrack,
 	openSearch,
 	openUrlDialog,
+	closeToTrayNow,
+	setArtTall,
 	pause,
 	play,
 	prevTrack,
@@ -77,6 +78,7 @@ import {
 	toggleArtCaption,
 	setSearchKind,
 	toggleMarqueeScroll,
+	toggleBitmapTitle,
 	toggleMilkdropOnStart,
 	playIndex,
 	toggleMilkdrop,
@@ -95,11 +97,14 @@ import { lyricsShow, toggleLyricsShow } from './lyrics.js';
 import { doubleFactor, zoomFactor } from './pixels.js';
 import { updateState } from '$lib/updater.svelte';
 import { thumb } from '$lib/thumb';
-import { SEARCH_KINDS, isSongRow, songsIn } from './searchKinds.js';
+import { SEARCH_KINDS, isSongRow, shuffleRow, songsIn } from './searchKinds.js';
 import { openLimusicSettings, toggleLimusic } from './navigate.js';
 import { libraryShown, openLibrary, toggleLibrary } from './library.js';
+import { artCanBeTall } from './layout.js';
+import { openSkinBrowser } from './skinBrowser.js';
 import { newPlaylistFor } from './newPlaylist.js';
 import { copyText } from '$lib/clipboard';
+import { lt } from '$lib/lt.svelte';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { uiState } from './uiState.js';
@@ -244,6 +249,10 @@ async function resultItems(index = null) {
 	const play = one === 'artist' ? 'Play radio' : one === 'album' ? 'Play album' : one === 'playlist' ? 'Play playlist' : `Play${n}`;
 	return [
 		{ text: play, accel: 'Enter', action: () => playResults(rows).catch(log('play')) },
+		// One album, playlist or artist: its tracks (an artist's top songs) in a shuffled queue.
+		...(one === 'album' || one === 'playlist' || one === 'artist'
+			? [{ text: 'Shuffle play', action: () => shuffleRow(results[rows[0]]).catch((e) => flashMarquee(`Couldn't shuffle: ${e}`)) }]
+			: []),
 		{ text: `Play next${n}`, enabled: queueable, action: () => queueResults(rows, true).catch(log('play next')) },
 		{ text: `Add to queue${n}`, enabled: queueable, accel: 'Shift+Enter', action: () => queueResults(rows, false).catch(log('add to queue')) },
 		SEPARATOR,
@@ -389,6 +398,17 @@ export function showArtMenu(at) {
 				},
 				SEPARATOR,
 				check('Show album name', art.caption, '', toggleArtCaption),
+				// Beside the player only, and the tall one with the EQ docked under it (its bottom
+				// edge snaps between them too).
+				(art.dock === 'left' || art.dock === 'right') && art.open
+					? {
+							text: 'Height',
+							items: [
+								check('Main window', !(art.tall && artCanBeTall()), '', () => setArtTall(false)),
+								{ ...check('Main window and equaliser', art.tall && artCanBeTall(), '', () => setArtTall(true)), enabled: artCanBeTall() }
+							]
+						}
+					: { text: 'Height', enabled: false },
 				{
 					text: 'Placement',
 					items: [
@@ -582,8 +602,8 @@ function itemExtras(item) {
 }
 
 /**
- * An artist's Shuffle and Subscribe, as its page has them (routes/artist/[id]): its top songs
- * shuffled, and the subscribe button, for its channel (which only the artist's page carries).
+ * An artist's Subscribe, as its page has it (routes/artist/[id]): the subscribe button, for its
+ * channel (which only the artist's page carries). Its Shuffle is Shuffle play, by Play.
  * Whether it's subscribed is known here from the library's subscriptions and what this machine
  * noted; YouTube's own answer decides when it's picked.
  * @param {import('$lib/api').BrowseItem} card
@@ -592,14 +612,6 @@ function artistItems(card) {
 	const signedIn = !!auth.account?.signedIn;
 	if (signedIn) loadLibraryExtras();
 	const subscribed = isSaved(card.id) || library.subscriptions.some((i) => i.id === card.id);
-	const shuffle = async () => {
-		const artist = await api.getArtist(card.id);
-		// The whole top-songs playlist (the page's "See all"), else the few songs on the page.
-		const top = artist.topSongsId ? await api.getPlaylist(artist.topSongsId) : null;
-		if (top?.items.length) return playFrom(card, top.items, null, artist.topSongsId, true, top.continuation);
-		if (!artist.topSongs.length) throw new Error('no songs');
-		return playFrom(card, artist.topSongs, null, undefined, true);
-	};
 	const subscribe = async () => {
 		const artist = await api.getArtist(card.id);
 		const next = !subscribed;
@@ -609,7 +621,6 @@ function artistItems(card) {
 		flashMarquee(next ? `Subscribed to ${artist.name ?? card.title}` : 'Unsubscribed');
 	};
 	return [
-		{ text: 'Shuffle', action: () => shuffle().catch((e) => flashMarquee(`Couldn't shuffle: ${e}`)) },
 		signedIn
 			? { text: subscribed ? 'Unsubscribe' : 'Subscribe', action: () => subscribe().catch((e) => flashMarquee(`Couldn't subscribe: ${e}`)) }
 			: { text: 'Subscribe', enabled: false }
@@ -634,15 +645,37 @@ export function showSearchKindMenu(at) {
 }
 
 /**
- * The search panel's bottom buttons: ADD plays or queues the selected results, REM clears, SEL
- * selects, MISC sorts the results, LIST runs a recent search again.
+ * Both ADD buttons' ways in, the playlist's and the search panel's: search, a link to play, a
+ * Spotify import (Limusic's, over the Media Library), the library.
+ */
+function addItems() {
+	return [
+		{ text: 'Search YouTube Music', accel: 'Ctrl+J', action: requestSearch },
+		{ text: 'Open YouTube Music / Spotify URL…', action: openUrlDialog },
+		{ text: 'Import from Spotify…', action: importFromSpotify },
+		SEPARATOR,
+		// Limusic's own Library page, in the Media Library.
+		{ text: 'Browse library…', action: () => openLibrary('/library').catch(log('browse library')) }
+	];
+}
+
+const importFromSpotify = () => openLibrary(undefined, { kind: 'import' }).catch(log('import from spotify'));
+const listenTogether = () => openLibrary(undefined, { kind: 'listen-together' }).catch(log('listen together'));
+
+/**
+ * The search panel's bottom buttons: ADD has the playlist's ADD menu, then plays or queues the
+ * selected results; REM clears, SEL selects, MISC sorts the results, LIST runs a recent search
+ * again.
  * @param {'search-add' | 'search-rem' | 'search-sel' | 'search-misc' | 'search-list'} which
  * @param {MenuAt} at
  */
 export function showSearchMenu(which, at) {
 	const s = uiState.search;
 	return popup(async () => {
-		if (which === 'search-add') return { items: await resultItems() };
+		if (which === 'search-add') {
+			const picked = markedRows(s).some((i) => s.results[i]?.rowKind !== 'header');
+			return { items: [...addItems(), ...(picked ? [SEPARATOR, ...(await resultItems())] : [])] };
+		}
 		if (which === 'search-rem') {
 			return {
 				items: [
@@ -696,15 +729,7 @@ export function showSearchMenu(which, at) {
 export function showPlaylistMenu(which, at) {
 	return popup(async () => {
 		if (which === 'add') {
-			return {
-				items: [
-					{ text: 'Search YouTube Music', accel: 'Ctrl+J', action: requestSearch },
-					{ text: 'Open YouTube URL…', action: openUrlDialog },
-					SEPARATOR,
-					// Limusic's own Library page, in the full window, for now.
-					{ text: 'Browse library…', action: () => openLibrary('/library').catch(log('browse library')) }
-				]
-			};
+			return { items: addItems() };
 		}
 		if (which === 'rem') {
 			return {
@@ -960,7 +985,7 @@ function placementItems(text, kind) {
  */
 export function showMainMenu(switchSkin, at) {
 	return popup(async () => {
-		const [list, library, stopAfter, limusicShown, libraryOpen] = await Promise.all([
+		const [list, library, stopAfter, limusicShown, libraryOpen, room, settings] = await Promise.all([
 			api.listWszSkins().catch((e) => {
 				log('list skins')(e);
 				return { dir: '', skins: [], current: null };
@@ -968,8 +993,13 @@ export function showMainMenu(switchSkin, at) {
 			libraryItems(),
 			api.stopAfterCurrentSet().catch(() => false),
 			api.limusicWindowShown().catch(() => false),
-			libraryShown().catch(() => false)
+			libraryShown().catch(() => false),
+			// Rust's, asked here: this window follows the room's changes but never read it at start.
+			api.ltGetState().catch(() => lt),
+			api.getSettings().catch(() => /** @type {Record<string, string>} */ ({}))
 		]);
+		// Limusic's own "Close to system tray" (unset is on): what ✕ and Alt+F4 do here too.
+		const closeToTray = settings.close_to_tray !== 'false';
 		const repeat = playback.queue.repeat ?? 'off';
 		const art = uiState.art;
 		/** @type {[import('./uiState.js').ArtDock, string][]} */
@@ -996,13 +1026,18 @@ export function showMainMenu(switchSkin, at) {
 				{
 					text: 'Play',
 					items: [
-						{ text: 'URL…', accel: 'Ctrl+L', action: openUrlDialog },
+						{ text: 'YouTube Music / Spotify URL…', accel: 'Ctrl+L', action: openUrlDialog },
 						{ text: 'Search…', accel: 'Ctrl+J', action: requestSearch },
 						{ text: 'Playlist from Library', items: library }
 					]
 				},
+				// Limusic's, over the Media Library; ticked while in a room.
+				{ text: 'Listen Together…', checked: room.role !== 'none', action: listenTogether },
 				// WACUP's: what's playing (Alt+3 picks the selected row instead when a list is active).
 				{ text: 'View file info...', accel: 'Alt+3', enabled: !!playback.now, action: showNowFileInfo },
+				SEPARATOR,
+				// Limusic's importer, over the Media Library: a Spotify playlist becomes a playlist here.
+				{ text: 'Import from Spotify…', action: importFromSpotify },
 				SEPARATOR,
 				// Limusic's pages in the skin's frame (library.js); Limusic's own window beside it.
 				check('Media Library', libraryOpen, 'Alt+L', () => toggleLibrary().catch(log('media library'))),
@@ -1013,7 +1048,6 @@ export function showMainMenu(switchSkin, at) {
 				check('Album Art', art.open, 'Alt+A', () => togglePanel('art')),
 				check('Lyrics', uiState.lyrics.open, 'Alt+Y', () => togglePanel('lyrics')),
 				SEPARATOR,
-				check('Always start in Winamp mode', uiState.startInWinamp, '', toggleStartInWinamp),
 				{
 					text: 'Options',
 					items: [
@@ -1021,7 +1055,15 @@ export function showMainMenu(switchSkin, at) {
 						SEPARATOR,
 						check('Always on top', uiState.alwaysOnTop, 'Ctrl+A', toggleAlwaysOnTop),
 						check('Double size', uiState.doubleSize, 'Ctrl+2', () => toggleDoubleSize()),
-						check('Time remaining', uiState.timeRemaining, 'Ctrl+T', toggleTimeRemaining)
+						check('Time remaining', uiState.timeRemaining, 'Ctrl+T', toggleTimeRemaining),
+						// Winamp 5's: text.bmp for a title it can spell, the TrueType font otherwise.
+						check('Use bitmap font for main title display', uiState.bitmapTitle, '', toggleBitmapTitle),
+						SEPARATOR,
+						check('Always start in Winamp mode', uiState.startInWinamp, '', toggleStartInWinamp),
+						// Limusic's setting itself, so its Settings and this agree.
+						check('✕ closes to tray', closeToTray, '', () =>
+							api.setSetting('close_to_tray', closeToTray ? 'false' : 'true').catch(log('close to tray'))
+						)
 					]
 				},
 				{
@@ -1062,6 +1104,9 @@ export function showMainMenu(switchSkin, at) {
 				{
 					text: 'Skins',
 					items: [
+						// Winamp's Alt+S: the list with a preview and search (skinBrowser.js).
+						{ text: 'Skin browser…', accel: 'Alt+S', action: () => openSkinBrowser().catch(log('skin browser')) },
+						SEPARATOR,
 						{ text: '<Base skin>', checked: list.current === null, action: () => switchSkin(null) },
 						...list.skins.map((s) => ({ text: s.name, checked: list.current === s.path, action: () => switchSkin(s.path) })),
 						SEPARATOR,
@@ -1111,8 +1156,11 @@ export function showMainMenu(switchSkin, at) {
 					]
 				},
 				SEPARATOR,
-				{ text: 'Back to Limusic', action: () => api.closeWinamp().catch(log('close winamp')) },
-				{ text: 'Exit', accel: 'Alt+F4', action: () => api.quitApp().catch(log('quit')) }
+				// Ctrl+W, ⌘W on macOS: away, still playing, whatever ✕ is set to do.
+				{ text: 'Close to tray', accel: 'Ctrl+W', action: closeToTrayNow },
+				{ text: 'Switch to Limusic mode', action: () => api.closeWinamp().catch(log('close winamp')) },
+				// Limusic's own quit key (shortcuts.ts), ⌘Q on macOS.
+				{ text: 'Exit', accel: 'Ctrl+Q', action: () => api.quitApp().catch(log('quit')) }
 			]
 		};
 	}, at);

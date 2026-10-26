@@ -25,6 +25,7 @@
 	import { goto } from '$app/navigation';
 	import LibraryPages from './LibraryPages.svelte';
 	import { currentPage, floatLibrary, onLibraryOpenRequest } from '../skin/library.js';
+	import { SKIN_SELECT_EVENT } from '../skin/skinBrowser.js';
 	import { isLit } from '../skin/focus.js';
 	import { coverFor } from '../skin/art.js';
 	import { LIST, SEARCH_INPUT_H, drawPlaylist, drawSearch } from '../skin/render/playlist.js';
@@ -108,7 +109,7 @@
 	 * to start, sign-in included until there's an account. */
 	function welcome() {
 		const signIn = auth.account?.signedIn ? '' : ' *** Sign in with the account button at the top of the Media Library';
-		return `*** Welcome to ${APP_NAME}! It really whips the llama's ass! *** To start, search in the Search window or open the Media Library (Alt+L)${signIn} ***`;
+		return `*** Welcome to ${APP_NAME}! It really whips the llama's ass! *** To start, search in the Search window or open the Media Library, the YouTube Music browser (Alt+L)${signIn} ***`;
 	}
 
 	/** Keys in the search box: see `searchKeydown`. */
@@ -286,11 +287,13 @@
 			if (typeof m === 'string') flashMarquee(m);
 			else flashMarquee(m.text, m.ms);
 		});
+		// The Skin Browser's Apply (its own window): switched here, where the skin lives.
+		const unlistenSkinSelect = listen(SKIN_SELECT_EVENT, (e) => applySkin(selectSkin(/** @type {string | null} */ (e.payload))));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
-			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'newpl'} */ (e.payload);
+			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'newpl' | 'skins'} */ (e.payload);
 			// The Open URL, save-preset, file info, about, update and new-playlist windows: nothing
 			// here tracks them.
-			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update' || kind === 'newpl') return;
+			if (kind === 'url' || kind === 'eqsave' || kind === 'fileinfo' || kind === 'about' || kind === 'update' || kind === 'newpl' || kind === 'skins') return;
 			if (kind === 'milkdrop') return void (uiState.milkdrop = false);
 			const view = { art: uiState.art, playlist: uiState.pl, search: uiState.search, eq: uiState.eq, lyrics: uiState.lyrics, library: uiState.library }[kind];
 			if (view.dock === 'float') view.open = false;
@@ -414,6 +417,7 @@
 			unlistenAdd.then((f) => f());
 			unlistenMarquee.then((f) => f());
 			unlistenClosed.then((f) => f());
+			unlistenSkinSelect.then((f) => f());
 			unlistenKey.then((f) => f());
 			unlistenMainMenu.then((f) => f());
 			unlistenZoom.then((f) => f());

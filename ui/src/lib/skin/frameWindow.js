@@ -6,8 +6,7 @@
 // corner does: Tauri's own resizing of undecorated windows takes a border on every side, the
 // titlebar's top included, before the page sees the press, so these windows aren't resizable to
 // GTK. Not from the left: on Wayland a window can't move itself to keep its right edge still.
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { resizeWinampPanel } from '$lib/api';
+import { resizeWinampPanel, winampStartDrag } from '$lib/api';
 import { requestMainMenu } from './menu.js';
 import { zoomFactor } from './pixels.js';
 
@@ -24,7 +23,8 @@ const CURSORS = /** @type {const} */ ({
 const MIN = /** @type {Record<string, { w: number, h: number }>} */ ({
 	library: { w: 400, h: 300 },
 	fileinfo: { w: 300, h: 150 },
-	about: { w: 300, h: 200 }
+	about: { w: 300, h: 200 },
+	skins: { w: 420, h: 300 }
 });
 
 /** @typedef {{ top: number, bottom: number, left: number, right: number }} Inset */
@@ -123,9 +123,12 @@ export function frameMouse(canvas, { onClose, inset, pressed, close, resizable }
 			const edge = e.target === canvas && !onClose(e) ? edgeAt(e, titleHeight()) : null;
 			canvas.style.cursor = edge ? CURSORS[edge] : '';
 		}
+		// A press whose release never came (a menu took it, or the window lost the mouse) mustn't
+		// start a drag: one started with no button down never ends on macOS.
+		if (press && !(e.buttons & 1)) press = null;
 		if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
 			press = null;
-			getCurrentWindow().startDragging();
+			winampStartDrag().catch(() => {});
 		}
 	};
 	const onUp = (/** @type {MouseEvent} */ e) => {
@@ -138,6 +141,8 @@ export function frameMouse(canvas, { onClose, inset, pressed, close, resizable }
 		if (onClose(e)) close();
 	};
 	const onMenu = (/** @type {MouseEvent} */ e) => {
+		// Ctrl+click on macOS is a left press as well as this menu, whose release the menu takes.
+		press = null;
 		if (onFrame(e.clientX, e.clientY, window.innerWidth, window.innerHeight, inset())) frameMenu(e);
 	};
 	canvas.addEventListener('mousedown', onDown);

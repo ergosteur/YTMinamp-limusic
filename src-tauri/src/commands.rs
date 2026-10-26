@@ -819,6 +819,19 @@ pub fn winamp_work_width(app: tauri::AppHandle) -> Option<f64> {
     crate::winamp::work_width(&app)
 }
 
+/// Winamp mode's Close to tray (Ctrl+W): every Winamp window hidden, playback going on. False
+/// when there's no tray to come back from, and nothing was hidden.
+#[tauri::command]
+pub fn winamp_to_tray(app: tauri::AppHandle) -> bool {
+    crate::winamp::hide_to_tray(&app)
+}
+
+/// The Winamp window's ✕: to the tray, or quit, as its Alt+F4 does.
+#[tauri::command]
+pub fn winamp_close(app: tauri::AppHandle) {
+    crate::winamp::close_requested(&app);
+}
+
 /// The remembered skin, parsed into sprite sheets (PNG-encoded) + window shape/colors for the
 /// Winamp UI. Falls back to the built-in skin.
 #[tauri::command]
@@ -960,6 +973,21 @@ pub async fn set_winamp_always_on_top(app: tauri::AppHandle, on: bool) -> Result
 #[tauri::command]
 pub async fn list_wsz_skins(app: tauri::AppHandle) -> Result<crate::winamp::SkinList, String> {
     crate::winamp::list(&app)
+}
+
+/// A Winamp window's drag, from its own canvas (see `winamp::start_drag`).
+#[tauri::command]
+pub fn winamp_start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
+    crate::winamp::start_drag(&window)
+}
+
+/// The Skin Browser's preview of a skin (`None` = built-in), without switching to it.
+#[tauri::command]
+pub async fn preview_wsz_skin(
+    app: tauri::AppHandle,
+    path: Option<String>,
+) -> Result<crate::winamp::SkinPayload, String> {
+    crate::winamp::preview(&app, path).await
 }
 
 /// Copy a picked `.wsz` into the skins folder; returns its new path.

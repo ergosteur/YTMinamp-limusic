@@ -10,7 +10,7 @@
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen } from '@tauri-apps/api/event';
-	import { closeWinampPanel, resizeWinampPanel } from '$lib/api';
+	import { closeWinampPanel, resizeWinampPanel, winampStartDrag } from '$lib/api';
 	import { logUi } from '$lib/errlog';
 	import { playback } from '$lib/player.svelte';
 	import { attachKeys } from '../skin/keys.js';
@@ -419,9 +419,11 @@
 		const onMove = (/** @type {MouseEvent} */ e) => {
 			// Released outside the window (the drag outran it): no mouseup comes, so end it here.
 			if (resizing && !(e.buttons & 1)) return onUp(e);
+			// No drag from a press whose release never came (see frameWindow.js): it never ends on macOS.
+			if (press && !(e.buttons & 1)) press = null;
 			if (press && Math.hypot(e.screenX - press.x, e.screenY - press.y) > 3) {
 				press = null;
-				win.startDragging();
+				winampStartDrag().catch(() => {});
 			}
 			document.body.style.cursor = resizing || onCorner(e) ? 'nwse-resize' : '';
 			if (!resizing) return;

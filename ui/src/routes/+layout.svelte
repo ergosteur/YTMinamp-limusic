@@ -54,6 +54,7 @@
 	import NewPlaylistWindow from '$lib/components/NewPlaylistWindow.svelte';
 	import FileInfoWindow from '$lib/components/FileInfoWindow.svelte';
 	import AboutWindow from '$lib/components/AboutWindow.svelte';
+	import SkinBrowserWindow from '$lib/components/SkinBrowserWindow.svelte';
 	import UpdateWindow from '$lib/components/UpdateWindow.svelte';
 	import MediaLibraryWindow from '$lib/components/MediaLibraryWindow.svelte';
 	import NowPlaying from '$lib/components/NowPlaying.svelte';
@@ -220,6 +221,7 @@
 	const isWinampNewPl = browser && getCurrentWindow().label === 'winamp-newpl';
 	const isWinampFileInfo = browser && getCurrentWindow().label === 'winamp-fileinfo';
 	const isWinampAbout = browser && getCurrentWindow().label === 'winamp-about';
+	const isWinampSkins = browser && getCurrentWindow().label === 'winamp-skins';
 	const isWinampUpdate = browser && getCurrentWindow().label === 'winamp-update';
 	// Limusic's pages in the skin's frame and colours (skin/library.js).
 	const isWinampLibrary = browser && getCurrentWindow().label === 'winamp-library';
@@ -242,7 +244,7 @@
 	onMount(() => {
 		// Before the mini-window bail-out: both windows run this SPA and both can throw.
 		initErrorLog();
-		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampNewPl || isWinampFileInfo || isWinampAbout || isWinampUpdate || isWinampLibrary) {
+		if (isMini || isWinamp || isWinampArt || winampList || isWinampUrl || isWinampMilkdrop || isWinampEqSave || isWinampNewPl || isWinampFileInfo || isWinampAbout || isWinampUpdate || isWinampLibrary || isWinampSkins) {
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
@@ -310,6 +312,8 @@
 	<FileInfoWindow />
 {:else if isWinampAbout}
 	<AboutWindow />
+{:else if isWinampSkins}
+	<SkinBrowserWindow />
 {:else if isWinampUpdate}
 	<UpdateWindow />
 {:else if isWinampLibrary}

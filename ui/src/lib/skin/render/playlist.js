@@ -207,6 +207,25 @@ export function drawSearch(ctx, sprites, pledit, search, oy, size = DOCKED, welc
 const ROW_SCROLL_AFTER_MS = 1200;
 
 /**
+ * `text` in lines no wider than `width` in the context's font, broken at spaces (a word wider
+ * than a line has one to itself). An empty line stays one.
+ * @param {CanvasRenderingContext2D} ctx @param {string} text @param {number} width
+ */
+function wrapText(ctx, text, width) {
+	const lines = [];
+	let line = '';
+	for (const word of text.split(' ')) {
+		const next = line ? `${line} ${word}` : word;
+		if (line && ctx.measureText(next).width > width) {
+			lines.push(line);
+			line = word;
+		} else line = next;
+	}
+	lines.push(line);
+	return lines;
+}
+
+/**
  * @param {CanvasRenderingContext2D} ctx
  * @param {Map<string, ImageBitmap>} sprites
  * @param {PleditColours} pledit
@@ -279,9 +298,15 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
 		ctx.fillText(status, LIST.x + 2, oy + area.y + ROW_H / 2);
 	} else {
 		ctx.textAlign = 'left';
-		welcome.forEach((line, row) => {
-			ctx.fillStyle = row === 0 ? (pledit.current ?? '#ffffff') : (pledit.normal ?? '#00ff00');
-			ctx.fillText(line, LIST.x + 2, oy + area.y + row * ROW_H + ROW_H / 2);
+		// Each line wrapped to the list's width, at spaces: skins' fonts differ in width. The
+		// first line (and what it wraps to) in the current-track colour.
+		let row = 0;
+		welcome.forEach((line, i) => {
+			ctx.fillStyle = i === 0 ? (pledit.current ?? '#ffffff') : (pledit.normal ?? '#00ff00');
+			for (const part of wrapText(ctx, line, LIST.w - 4)) {
+				ctx.fillText(part, LIST.x + 2, oy + area.y + row * ROW_H + ROW_H / 2);
+				row++;
+			}
 		});
 	}
 	// Rows are numbered past any headers above (an "All" search's sections).

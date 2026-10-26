@@ -20,9 +20,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const LABEL: &str = "winamp";
 /// The panels that can float in windows of their own (docked, they're drawn inside [`LABEL`]),
 /// each window labelled `winamp-<panel>`; `url` is the Open URL dialog, which only ever floats.
-pub const PANELS: [&str; 13] = [
+pub const PANELS: [&str; 14] = [
     "art", "playlist", "search", "eq", "lyrics", "url", "milkdrop", "eqsave", "fileinfo", "about", "update", "library",
-    "newpl",
+    "newpl", "skins",
 ];
 /// Sent to [`LABEL`] with the panel's name when its floating window goes away, however it went.
 pub const PANEL_CLOSED_EVENT: &str = "winamp-panel-closed";
@@ -130,6 +130,62 @@ pub fn close(app: &AppHandle) {
     });
 }
 
+/// The Winamp windows closed to the tray (✕, Alt+F4, Close to tray): the ones that were showing,
+/// to show again. Empty while Winamp mode is on screen, or not open at all.
+static IN_TRAY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Hide every Winamp window to the tray, playback going on, as Limusic's ✕ does its window.
+/// False, with nothing hidden, when there's no tray to come back from (see `tray::available`).
+pub fn hide_to_tray(app: &AppHandle) -> bool {
+    if !crate::tray::available() || app.get_webview_window(LABEL).is_none() {
+        return false;
+    }
+    let mut hidden = IN_TRAY.lock().unwrap_or_else(|e| e.into_inner());
+    for label in window_labels() {
+        if let Some(w) = app.get_webview_window(&label) {
+            if w.is_visible().unwrap_or(false) && !hidden.contains(&label) {
+                let _ = w.hide();
+                hidden.push(label);
+            }
+        }
+    }
+    crate::viz::stop(app);
+    true
+}
+
+/// Bring the Winamp windows back from the tray, if that's where they are: every way back
+/// (`tray::show_main`: the tray, a second launch, the media keys' raise) asks this first, so
+/// Winamp mode comes back as it went.
+pub fn restore_from_tray(app: &AppHandle) -> bool {
+    let labels = std::mem::take(&mut *IN_TRAY.lock().unwrap_or_else(|e| e.into_inner()));
+    let Some(main) = app.get_webview_window(LABEL) else { return false };
+    if labels.is_empty() {
+        return false;
+    }
+    for label in labels.iter().filter(|l| *l != LABEL) {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.show();
+        }
+    }
+    let _ = main.show();
+    let _ = main.unminimize();
+    let _ = main.set_focus();
+    crate::viz::start(app);
+    true
+}
+
+/// The Winamp window's ✕ and Alt+F4: to the tray when Limusic's ✕ would go there (its "close to
+/// tray" setting, and a tray to come back from), otherwise quit, as Limusic's would.
+pub fn close_requested(app: &AppHandle) {
+    let hides = app
+        .try_state::<std::sync::Arc<crate::state::AppState>>()
+        .map(|s| crate::close_hides(s.db.get_setting("close_to_tray").as_deref()))
+        .unwrap_or(true);
+    if !(hides && hide_to_tray(app)) {
+        app.exit(0);
+    }
+}
+
 /// Resize the window to match a skin's actual dimensions (double-size mode, shade mode). No-op
 /// if the window isn't open.
 pub fn resize(app: &AppHandle, width: f64, height: f64) {
@@ -215,6 +271,7 @@ pub fn open_panel(app: &AppHandle, panel: &str, width: f64, height: f64) -> Resu
         "update" => "YTMinamp Update",
         "library" => "Media Library",
         "newpl" => "New Playlist",
+        "skins" => "Skin Browser",
         _ => "Search",
     };
     // Not resizable (the UI sizes the window itself), except MilkDrop: GTK won't fullscreen a
@@ -702,6 +759,32 @@ pub async fn select(app: &AppHandle, path: Option<String>) -> Result<SkinPayload
     let payload = load(path.as_deref()).await?;
     update_prefs(app, |prefs| prefs.skin = path)?;
     Ok(payload)
+}
+
+/// Drag a Winamp window, but on macOS only while the left button is actually down: the request
+/// arrives after the press that asked for it, and a window drag started once the button is up
+/// never ends there (the window sticks to the cursor and other clicks stop reaching it).
+pub fn start_drag(window: &tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyClass;
+        let Some(ns_event) = AnyClass::get(c"NSEvent") else { return Ok(()) };
+        // +[NSEvent pressedMouseButtons]: bit 0 is the left button.
+        let held: usize = unsafe { objc2::msg_send![ns_event, pressedMouseButtons] };
+        if held & 1 == 0 {
+            return Ok(());
+        }
+    }
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
+/// The Skin Browser's preview: a skin from the skins folder (`None` = built-in), loaded as
+/// [`select`] would, without making it the current one.
+pub async fn preview(app: &AppHandle, path: Option<String>) -> Result<SkinPayload, String> {
+    if let Some(path) = &path {
+        in_skins_dir(app, path)?;
+    }
+    load(path.as_deref()).await
 }
 
 /// Load the remembered skin, falling back to the built-in one if it has gone missing or broken.

@@ -18,7 +18,8 @@
     "winamp-about",
     "winamp-update",
     "winamp-library",
-    "winamp-newpl"
+    "winamp-newpl",
+    "winamp-skins"
   ],
   "permissions": [
     "core:default",

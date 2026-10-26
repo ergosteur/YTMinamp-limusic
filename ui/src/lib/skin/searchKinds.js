@@ -104,8 +104,8 @@ function byTopArtist(top) {
 	);
 }
 
-/** Play `row` as a click in Limusic would. @param {SearchRow | undefined} row */
-export async function playRow(row) {
+/** Play `row` as a click in Limusic would, shuffled if asked. @param {SearchRow | undefined} row @param {boolean} [shuffle] */
+export async function playRow(row, shuffle = false) {
 	if (!row || row.rowKind === 'header') return;
 	const item = row.browse;
 	if (!item) return api.play(row);
@@ -113,7 +113,24 @@ export async function playRow(row) {
 	const page = item.kind === 'album' ? await api.getAlbum(item.id) : await api.getPlaylist(item.id);
 	const sourceId = 'playlistId' in page ? page.playlistId : item.id;
 	const continuation = 'continuation' in page ? page.continuation : undefined;
-	await playFrom({ kind: item.kind, id: item.id, title: page.title ?? item.title }, page.items, null, sourceId, undefined, continuation);
+	await playFrom({ kind: item.kind, id: item.id, title: page.title ?? item.title }, page.items, null, sourceId, shuffle || undefined, continuation);
+}
+
+/**
+ * Shuffle play, as Limusic's menus and pages have it: an album's or playlist's tracks, or an
+ * artist's top songs (its page's Shuffle: the whole top-songs playlist, else the few on the page),
+ * in a shuffled queue. Songs have none.
+ * @param {SearchRow | undefined} row
+ */
+export async function shuffleRow(row) {
+	const item = row?.browse;
+	if (!item) return;
+	if (item.kind !== 'artist') return playRow(row, true);
+	const artist = await api.getArtist(item.id);
+	const top = artist.topSongsId ? await api.getPlaylist(artist.topSongsId) : null;
+	if (top?.items.length) return playFrom(item, top.items, null, artist.topSongsId, true, top.continuation);
+	if (!artist.topSongs.length) throw new Error('no songs');
+	return playFrom(item, artist.topSongs, null, undefined, true);
 }
 
 /**

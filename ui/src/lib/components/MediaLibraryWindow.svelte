@@ -12,7 +12,7 @@
 	import { artFrame, drawFrame, frameInset, onCloseButton } from '../skin/render/albumArt.js';
 	import { pinOneToOnePixels } from '../skin/pixels.js';
 	import { ui } from '$lib/player.svelte';
-	import { knowSettings, loadSkin, tickerToast } from '../skin/skinApi.js';
+	import { closeToTrayNow, knowSettings, loadSkin, tickerToast } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
 	import { keyName } from '../skin/keys.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -92,10 +92,11 @@
 			const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
 			const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 			// The player's keys that work from here too: Alt+L hides it, Alt+M shows Limusic's
-			// window, Ctrl+P Preferences (Limusic has none of them).
+			// window, Ctrl+P Preferences, Ctrl+W closes to tray (Limusic has none of them).
 			if (alt && keyName(e) === 'l') close();
 			else if (alt && keyName(e) === 'm') void toggleLimusic();
 			else if (ctrl && keyName(e) === 'p') void openLimusicSettings();
+			else if (ctrl && keyName(e) === 'w') closeToTrayNow();
 			else return;
 			e.preventDefault();
 		};

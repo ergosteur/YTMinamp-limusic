@@ -1,9 +1,9 @@
 // Where everything sits in the one window. Winamp stacks its windows under the main one: the
 // equalizer, then the playlist editor, with the search panel (opened by eject) just above it,
 // then album art and lyrics if they're docked rather than floating; each 275 wide. Any of them can float in a window of its own instead, which leaves it
-// out of this one. Album art can instead sit beside the main window, at its height, on
-// either side (docked left, everything else shifts right by its width), or float in a window of
-// its own, which leaves it out of this one.
+// out of this one. Album art can instead sit beside the main window, at its height (or the main
+// window's and the EQ's together, `artTall`), on either side (docked left, everything else
+// shifts right by its width), or float in a window of its own, which leaves it out of this one.
 import { MAIN_H, MAIN_W } from './render/mainWindow.js';
 import { PL_H } from './render/playlist.js';
 import { artSize } from './render/albumArt.js';
@@ -25,6 +25,14 @@ export const LIBRARY_MAX_W = 1600;
 const LYRICS_FIT_MIN_W = 380;
 /** @typedef {{ kind: PanelKind, x: number, y: number, w: number, h: number }} Placed */
 
+/** Side-docked album art's two heights: the main window's, or the main window's and the EQ's. */
+export const ART_SIDE_H = MAIN_H;
+export const ART_TALL_H = MAIN_H + EQ_H;
+/** Whether side-docked art can be the tall one: only with the EQ docked under the main window. */
+export const artCanBeTall = () => uiState.eq.open && uiState.eq.dock === 'stack';
+/** Side-docked album art's height, as set and as the EQ allows. */
+export const artSideHeight = () => (uiState.art.tall && artCanBeTall() ? ART_TALL_H : ART_SIDE_H);
+
 /**
  * @returns {{ mainX: number, width: number, height: number, panels: Placed[] }} `panels` are the
  *   docked panels in canvas coordinates, side-docked album art included.
@@ -32,7 +40,7 @@ const LYRICS_FIT_MIN_W = 380;
 export function dockedLayout() {
 	const art = uiState.art;
 	const side = art.open && (art.dock === 'left' || art.dock === 'right');
-	const beside = artSize(art.frame, { height: MAIN_H }, art.caption);
+	const beside = artSize(art.frame, { height: artSideHeight() }, art.caption);
 	const mainX = side && art.dock === 'left' ? beside.w : 0;
 
 	/** @type {Placed[]} */

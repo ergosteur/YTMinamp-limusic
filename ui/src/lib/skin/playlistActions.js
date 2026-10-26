@@ -3,6 +3,7 @@
 // before it stay put, the same rule Limusic's own queue panel follows.
 import * as api from '$lib/api';
 import { auth, ownedByUser, playFrom, playback } from '$lib/player.svelte';
+import { importError, isSpotifyLink } from '$lib/import.svelte';
 import { parseYtLink } from '$lib/ytlink';
 import { flashMarquee } from './skinApi.js';
 import { uiState } from './uiState.js';
@@ -227,15 +228,40 @@ export async function saveQueue(local) {
 }
 
 /**
- * Open a pasted YouTube / YouTube Music link (the ADD menu's Open URL). Limusic's own dialog goes
- * to the item's page; Winamp mode has no pages, so it plays: a song now (radio after it, as a
- * click in Limusic does), a playlist or album in place of the queue, an artist's radio.
+ * Play a pasted YouTube / YouTube Music or Spotify link (the ADD menu's Open URL). Limusic's own
+ * dialog goes to the item's page; Winamp mode has no pages, so it plays: a song now (radio after
+ * it, as a click in Limusic does), a playlist or album in place of the queue, an artist's radio.
+ * A Spotify track, album or artist is found on YouTube Music first, as Limusic's Open link does
+ * (`openSpotifyLink`). A Spotify playlist is only answered: matching it track by track is the
+ * import, a flow of its own (Import from Spotify).
  * @param {string} url
- * @returns {Promise<boolean>} false if it isn't a link Limusic can open
+ * @returns {Promise<'played' | 'not-a-link' | 'spotify-playlist'>}
  */
 export async function openLink(url) {
+	if (isSpotifyLink(url)) return playSpotify(url.trim());
 	const target = parseYtLink(url);
-	if (!target) return false;
+	if (!target) return 'not-a-link';
+	await playTarget(target);
+	return 'played';
+}
+
+/** @param {string} link a Spotify link */
+async function playSpotify(link) {
+	/** @type {import('$lib/api').ImportResolved} */
+	let found;
+	try {
+		found = await api.importResolve(link);
+	} catch (e) {
+		throw importError(e);
+	}
+	if (found.kind === 'playlist') return 'spotify-playlist';
+	if (found.kind === 'song') await api.play(found.song);
+	else await playTarget(found);
+	return 'played';
+}
+
+/** @param {import('$lib/ytlink').LinkTarget} target */
+async function playTarget(target) {
 	if (target.kind === 'song') {
 		await api.play(await api.song(target.id));
 	} else if (target.kind === 'artist') {
@@ -247,5 +273,4 @@ export async function openLink(url) {
 		const continuation = 'continuation' in page ? page.continuation : undefined;
 		await playFrom(source, page.items, null, sourceId, undefined, continuation);
 	}
-	return true;
 }

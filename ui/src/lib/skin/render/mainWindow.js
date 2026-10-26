@@ -137,9 +137,9 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
     drawTimeDigits(ctx, numbers, numsEx, secs, remaining);
   }
 
-  drawTitle(ctx, uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll);
-
   const text = sprites.get("text");
+  drawTitle(ctx, uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll, text, uiState.bitmapTitle);
+
   if (text) {
     if (uiState.kbps != null) drawText(ctx, text, String(uiState.kbps).padStart(3, " ").slice(-3), KBPS_POS.x, KBPS_POS.y);
     if (uiState.khz != null) drawText(ctx, text, String(uiState.khz).padStart(2, " ").slice(-2), KHZ_POS.x, KHZ_POS.y);

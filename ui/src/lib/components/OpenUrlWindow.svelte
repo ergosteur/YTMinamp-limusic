@@ -1,8 +1,11 @@
 <script>
-	// The ADD menu's Open YouTube URL dialog, a small window of its own (label "winamp-url", see
-	// +layout.svelte and winamp.rs) in the skin's generic frame: paste a YouTube / YouTube Music
-	// link, Enter or OK plays it (playlistActions.js `openLink`), Esc or ✕ closes it.
+	// The ADD menu's Open URL dialog, a small window of its own (label "winamp-url", see
+	// +layout.svelte and winamp.rs) in the skin's generic frame: paste a YouTube / YouTube Music or
+	// Spotify link, Enter or OK plays it (playlistActions.js `openLink`), Esc or ✕ closes it. Under
+	// the box, the kinds of link it plays.
 	import { onMount } from 'svelte';
+	import { HugeiconsIcon } from '@hugeicons/svelte';
+	import { SpotifyIcon, YoutubeIcon } from '@hugeicons/core-free-icons';
 	import { listen } from '@tauri-apps/api/event';
 	import { closeWinampPanel, resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
@@ -19,7 +22,10 @@
 	const BOX_H = 17;
 	const OK_W = 30;
 	const STATUS_LINE = 13;
-	const BODY_H = BOX_H + 8 + 2 * STATUS_LINE;
+	/** Then the supported links, as tall as they wrap to in the skin's font. */
+	const HELP_GAP = 4;
+	let helpH = $state(0);
+	const bodyH = $derived(BOX_H + 8 + 2 * STATUS_LINE + HELP_GAP + helpH);
 
 	/** @type {HTMLCanvasElement} */
 	let canvas;
@@ -30,7 +36,7 @@
 	/** @type {import('$lib/api').SkinPayload['pledit']} */
 	let pledit = $state({});
 	let inset = $state({ top: 20, bottom: 14, left: 11, right: 11 });
-	let status = $state('Paste a YouTube or YouTube Music link, then press Enter');
+	let status = $state('Paste a YouTube, YouTube Music or Spotify link, then press Enter');
 	let busy = $state(false);
 	let closePressed = false;
 
@@ -40,7 +46,7 @@
 		const ctx = canvas.getContext('2d');
 		if (!ctx || sprites.size === 0) return;
 		const w = WIDTH;
-		const h = inset.top + BODY_H + inset.bottom;
+		const h = inset.top + bodyH + inset.bottom;
 		canvas.width = w;
 		canvas.height = h;
 		canvas.style.width = `${w}px`;
@@ -50,16 +56,29 @@
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'open url', isLit('url'));
 	}
 
+	// The frame and the help's wrap decide the height: gen.bmp's, the playlist's and the EQ's
+	// frames differ, and so do skins' fonts. Drawn again at the new size.
+	$effect(() => {
+		const h = inset.top + bodyH + inset.bottom;
+		if (sprites.size === 0 || !helpH) return;
+		draw();
+		resizeWinampPanel('url', WIDTH * doubleFactor(), h * doubleFactor()).catch(() => {});
+	});
+
 	async function submit() {
 		if (busy) return;
 		busy = true;
 		status = 'Opening...';
 		try {
-			if (await openLink(input.value)) {
+			const result = await openLink(input.value);
+			if (result === 'played') {
 				close();
 				return;
 			}
-			status = "That isn't a YouTube or YouTube Music link";
+			status =
+				result === 'spotify-playlist'
+					? 'A Spotify playlist: use Import from Spotify to bring it over'
+					: "That isn't a YouTube, YouTube Music or Spotify link";
 		} catch (e) {
 			status = `Couldn't open it: ${e}`;
 		} finally {
@@ -99,9 +118,6 @@
 					sprites = decoded;
 					pledit = payload.pledit;
 					inset = frameInset(artFrame(sprites));
-					draw();
-					// The frame decides the height (gen.bmp's, the playlist's and the EQ's differ).
-					resizeWinampPanel('url', WIDTH * doubleFactor(), (inset.top + BODY_H + inset.bottom) * doubleFactor()).catch(() => {});
 				})
 				.catch((e) => logUi('error', `open url skin failed: ${e}`));
 		};
@@ -177,5 +193,26 @@
 		style:font-family={font}
 	>
 		{status}
+	</div>
+	<div
+		class="pointer-events-none absolute text-[11px]"
+		style:left="{inset.left + 4}px"
+		style:top="{inset.top + BOX_H + 6 + 2 * STATUS_LINE + HELP_GAP}px"
+		style:width="{WIDTH - inset.left - inset.right - 8}px"
+		style:line-height="{STATUS_LINE}px"
+		style:color={pledit.normal ?? '#00ff00'}
+		style:font-family={font}
+		bind:clientHeight={helpH}
+	>
+		<div style:color={pledit.current ?? '#ffffff'}>Supported links</div>
+		<!-- Each service's icon before its line, in the skin's text colour. -->
+		<div>
+			<HugeiconsIcon icon={YoutubeIcon} size={11} class="mr-1 inline-block align-[-2px]" />YouTube: Track/Song, Video, Playlist,
+			Album, Channel.
+		</div>
+		<div>
+			<HugeiconsIcon icon={SpotifyIcon} size={11} class="mr-1 inline-block align-[-2px]" />Spotify: Track/Song, Album, Artist.
+			For playlists, use Import from Spotify.
+		</div>
 	</div>
 </div>

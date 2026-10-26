@@ -501,8 +501,10 @@ export async function restorePrefs() {
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
 	uiState.startInWinamp = pref('startInWinamp', true);
 	uiState.art.caption = pref('artCaption', false);
+	uiState.art.tall = pref('artTall', false);
 	uiState.search.kind = pref('searchKind', 'songs');
 	uiState.marqueeScroll = pref('marqueeScroll', true);
+	uiState.bitmapTitle = pref('bitmapTitle', false);
 	uiState.milkdropOnStart = pref('milkdropOnStart', false);
 	if (uiState.milkdropOnStart && !uiState.milkdrop) toggleMilkdrop();
 	uiState.lyrics.width = pref('lyricsWidth', LYRICS_W);
@@ -522,8 +524,12 @@ export async function restorePrefs() {
 	if (art?.open) setArt(true, art.dock);
 	else if (art) uiState.art.dock = art.dock;
 	uiState.library.width = pref('libraryWidth', uiState.library.width);
-	// Open, floating, on a first run. (Build 10 remembered only whether its window was open.)
-	const library = /** @type {Placement} */ (pref('panel-library', { open: pref('libraryOpen', true), dock: 'float' }));
+	// Open on a first run, as Winamp 5's is, docked right of the stack: floating, it can't be
+	// placed on Wayland and opened over the stack. (Build 10 remembered only whether its window
+	// was open: floating, then.)
+	const library = /** @type {Placement} */ (
+		pref('panel-library', pref('libraryOpen', null) === null ? { open: true, dock: 'right' } : { open: pref('libraryOpen', true), dock: 'float' })
+	);
 	if (library?.open) setPanelOpen('library', true, library.dock);
 	else if (library) uiState.library.dock = library.dock;
 	resizeToLayout();
@@ -645,6 +651,19 @@ export function showNowFileInfo() {
 	else flashMarquee('Nothing playing');
 }
 
+/**
+ * Side-docked album art as tall as the main window and the EQ (`tall`), or the main window alone:
+ * its bottom edge snaps between them, and its Height menu picks one.
+ * @param {boolean} tall @param {boolean} [save] false while a drag is still going
+ */
+export function setArtTall(tall, save = true) {
+	if (tall !== uiState.art.tall) {
+		uiState.art.tall = tall;
+		resizeToLayout();
+	}
+	if (save) savePref('artTall', tall);
+}
+
 /** Tells every Winamp window the art's caption went on or off (see `toggleArtCaption`). */
 export const ART_CAPTION_EVENT = 'winamp-art-caption';
 
@@ -671,6 +690,12 @@ export function placeArt(/** @type {import('./uiState.js').ArtDock | null} */ do
 export function toggleMarqueeScroll() {
 	uiState.marqueeScroll = !uiState.marqueeScroll;
 	savePref('marqueeScroll', uiState.marqueeScroll);
+}
+
+/** "Use bitmap font for main title display" (Options). */
+export function toggleBitmapTitle() {
+	uiState.bitmapTitle = !uiState.bitmapTitle;
+	savePref('bitmapTitle', uiState.bitmapTitle);
 }
 
 /** "Run the plug-in on start-up" (the analyzer's right-click menu). */
@@ -720,7 +745,14 @@ export function openEqPresetDialog() {
 	api.openWinampPanel('eqsave', 275 * doubleFactor(), 70 * doubleFactor()).catch((e) => console.error('open eq preset dialog failed', e));
 }
 
-/** ADD → Open YouTube URL: the small dialog window (OpenUrlWindow.svelte). */
+/** Close to tray (Ctrl+W, the main menu): every Winamp window hidden, playback going on. */
+export function closeToTrayNow() {
+	api.winampToTray()
+		.then((hidden) => hidden || flashMarquee('No system tray to close to'))
+		.catch((e) => console.error('close to tray failed', e));
+}
+
+/** ADD → Open URL: the small dialog window (OpenUrlWindow.svelte). */
 export function openUrlDialog() {
 	api.openWinampPanel('url', 275 * doubleFactor(), 70 * doubleFactor()).catch((e) => console.error('open url dialog failed', e));
 }
@@ -938,7 +970,7 @@ export function searchWelcome() {
 		'Type above to search YouTube Music,',
 		...(playback.now && playback.paused ? ['or just hit Play!'] : []),
 		'',
-		'Media Library: Alt+L',
+		'Media Library (YouTube Music browser): Alt+L',
 		...(auth.account?.signedIn ? [] : ['Sign in: the account button at the top', 'of the Media Library'])
 	];
 }

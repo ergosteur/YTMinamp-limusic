@@ -13,6 +13,7 @@ import {
 	nextTrack,
 	nudgeVolume,
 	openUrlDialog,
+	closeToTrayNow,
 	pause,
 	play,
 	playIndex,
@@ -33,11 +34,12 @@ import {
 import { toggleTimeRemaining } from './input.js';
 import { cropToSelected, removeSelected } from './playlistActions.js';
 import { uiState } from './uiState.js';
+import { openSkinBrowser } from './skinBrowser.js';
 
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
  *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'
- *   | 'stopAfter' | 'stopFade' | 'library' | 'limusic' | 'searchPanel' | 'prefs'} KeyAction */
+ *   | 'stopAfter' | 'stopFade' | 'library' | 'limusic' | 'searchPanel' | 'prefs' | 'tray' | 'skins'} KeyAction */
 
 /**
  * The key, as Limusic's `keyOf` reads it, except where a modifier or the layout turns one of our
@@ -64,7 +66,7 @@ function actionFor(e) {
 	const ctrl = e.ctrlKey || e.metaKey;
 	const key = keyName(e);
 	if (e.altKey && !ctrl && !e.shiftKey) {
-		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', k: 'searchPanel', 3: 'fileInfo', l: 'library', m: 'limusic' })[key] ?? null;
+		return /** @type {Record<string, KeyAction>} */ ({ e: 'playlist', g: 'eq', a: 'art', y: 'lyrics', k: 'searchPanel', 3: 'fileInfo', l: 'library', m: 'limusic', s: 'skins' })[key] ?? null;
 	}
 	// Lyrics text size, the keys Limusic zooms its own window with. Shift allowed: `+` is
 	// Shift+= on many layouts. The numpad's +, - and 0 give the same keys.
@@ -85,7 +87,9 @@ function actionFor(e) {
 				Delete: 'crop',
 				v: 'stopAfter',
 				// J's, held with Ctrl: Ctrl+F is Limusic's next track.
-				j: 'search'
+				j: 'search',
+				// Close to tray, ⌘W on macOS: away, still running. (Alt+W stays free for shade.)
+				w: 'tray'
 			})[key] ?? null
 		);
 	}
@@ -166,6 +170,10 @@ export function runKey(action) {
 			return void toggleLimusic().catch(log('limusic window'));
 		case 'prefs':
 			return void openLimusicSettings().catch(log('preferences'));
+		case 'tray':
+			return closeToTrayNow();
+		case 'skins':
+			return void openSkinBrowser().catch(log('skin browser'));
 		case 'stopFade':
 			return void stopWithFadeout().catch(log('stop with fadeout'));
 	}

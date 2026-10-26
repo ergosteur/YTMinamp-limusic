@@ -549,8 +549,12 @@ export const setMiniCompact = (compact: boolean) => invoke<void>('set_mini_compa
 // --- Winamp skin mode (Rust winamp.rs) ----------------------------------------------------------
 /** Hide the app to the tray and open the Winamp-skinned window (a third window running this SPA). */
 export const openWinamp = () => invoke<void>('open_winamp');
-/** Close the Winamp window and bring the app back. */
+/** Close the Winamp window and bring the app back (Switch to Limusic mode). */
 export const closeWinamp = () => invoke<void>('close_winamp');
+/** Close to tray: hide every Winamp window, playback going on. False with no tray to come back from. */
+export const winampToTray = () => invoke<boolean>('winamp_to_tray');
+/** The Winamp window's ✕: to the tray (Limusic's close-to-tray setting), or quit. */
+export const winampClose = () => invoke<void>('winamp_close');
 /** Whether a `width`x`height` Winamp window fits its screen. */
 export const winampFits = (width: number, height: number) => invoke<boolean>('winamp_fits', { width, height });
 /** How wide the Winamp window's screen is, less panels, in logical px (null: can't say). */
@@ -571,6 +575,10 @@ export const setVizLevels = (levels: 'winamp' | 'linear') => invoke<void>('set_v
 export const loadWszSkin = () => invoke<SkinPayload>('load_wsz_skin');
 /** Switch skins (`null` = built-in) and remember the choice. */
 export const selectWszSkin = (path: string | null) => invoke<SkinPayload>('select_wsz_skin', { path });
+/** Drag this Winamp window, if the left button is still down (winamp.rs `start_drag`). */
+export const winampStartDrag = () => invoke<void>('winamp_start_drag');
+/** The Skin Browser's preview of a skin (`null` = built-in), without switching to it. */
+export const previewWszSkin = (path: string | null) => invoke<SkinPayload>('preview_wsz_skin', { path });
 /** The skins folder's `.wsz` files, for the skin menu. */
 export const listWszSkins = () => invoke<SkinList>('list_wsz_skins');
 /** Copy a picked `.wsz` into the skins folder; resolves to its new path. */
@@ -598,7 +606,7 @@ export const winampPopupMenu = (items: WinampMenuEntry[], x: number, y: number, 
 export const winampQueueIntro = (item: SongItem, ifEmpty: boolean) =>
 	invoke<void>('winamp_queue_intro', { item, ifEmpty });
 /** A Winamp panel that can float in a window of its own (winamp.rs, FloatingPanel windows). */
-export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'library' | 'newpl';
+export type WinampPanel = 'art' | 'playlist' | 'search' | 'eq' | 'lyrics' | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'library' | 'newpl' | 'skins';
 /** Float a panel in its own window, or bring that window back if it's up. */
 export const openWinampPanel = (kind: WinampPanel, width: number, height: number) =>
 	invoke<void>('open_winamp_panel', { kind, width, height });

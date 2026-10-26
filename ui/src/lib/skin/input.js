@@ -44,6 +44,7 @@ import {
 	stopPlayback,
 	togglePlayPause,
 	resizeToLayout,
+	setArtTall,
 	showNowFileInfo,
 	showUpdateDialog,
 	updateMessageShowing,
@@ -53,14 +54,14 @@ import {
 import { ART_CLOSE, artTitleHeight, frameInset } from './render/albumArt.js';
 import { onFrame } from './frameWindow.js';
 import { EQ_BANDS, eqHit, eqValueAt } from './render/equalizer.js';
-import { LIBRARY_MAX_W, LIBRARY_MIN_W, LYRICS_MAX_W, LYRICS_MIN_W } from './layout.js';
+import { ART_SIDE_H, ART_TALL_H, LIBRARY_MAX_W, LIBRARY_MIN_W, LYRICS_MAX_W, LYRICS_MIN_W, artCanBeTall } from './layout.js';
 import { savePref } from './prefs.js';
 import { setActivePart } from './focus.js';
 import { showAbout } from './menu.js';
 import { clickRow, selectOnly } from './selection.js';
 import { uiState } from './uiState.js';
 import { playback } from '$lib/player.svelte';
-import { closeWinamp } from '$lib/api';
+import { winampClose, winampStartDrag } from '$lib/api';
 import { onPinch } from './pixels.js';
 
 const TITLEBAR_BUTTON_SIZE = { w: 9, h: 9 };
@@ -292,7 +293,7 @@ function playlistButtonAt(x, py, size) {
 }
 
 const PLAYLIST_BUTTON_TIPS = {
-	add: 'Search YouTube Music, or open a YouTube link',
+	add: 'Search, open a link, or import from Spotify',
 	rem: 'Remove the selected track, or clear the queue',
 	sel: 'Select all, none, or invert (Ctrl/Shift+click picks several)',
 	misc: 'Sort or reverse what plays next',
@@ -300,7 +301,7 @@ const PLAYLIST_BUTTON_TIPS = {
 };
 
 const SEARCH_BUTTON_TIPS = /** @type {Record<string, string>} */ ({
-	add: 'Play, play next or queue the selected results',
+	add: 'Search, open a link, import from Spotify, or play the selected results',
 	rem: 'Clear the results or the search box',
 	sel: 'Select all, none, or invert (Ctrl/Shift+click picks several)',
 	misc: 'Sort the results by title, artist or length, or reverse them',
@@ -417,7 +418,7 @@ function tooltipAt(hit) {
 		if (!pb) return '';
 		return kind === 'playlist' ? PLAYLIST_BUTTON_TIPS[pb] : (SEARCH_BUTTON_TIPS[pb] ?? '');
 	}
-	if (hits(CLOSE_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Back to Limusic';
+	if (hits(CLOSE_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Close';
 	if (hits(OPTIONS_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Main menu (skins, shuffle, repeat)';
 	if (hits(MINIMIZE_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) return 'Minimize';
 	if (hits(VIS_POS, VIS_POS, x, y)) return 'Click to turn the visualizer on/off';
@@ -443,7 +444,7 @@ function tooltipAt(hit) {
  */
 export function attachInput(canvas, host) {
 	current = host;
-	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | { what: 'width', kind: 'lyrics' | 'library', left: number } | null} */
+	/** @type {{ what: 'seek' | 'volume' | 'balance' } | { what: 'scroll', kind: ListKind, top: number, size: Size } | { what: 'eq', slider: 'preamp' | number, top: number } | { what: 'width', kind: 'lyrics' | 'library', left: number } | { what: 'artHeight', top: number } | null} */
 	let drag = null;
 	/** Docked lyrics and library are resized from their right edge; floating ones from their window's. */
 	const onWidthEdge = (/** @type {Hit | null} */ hit) =>
@@ -451,6 +452,14 @@ export function attachInput(canvas, host) {
 		getCurrentWindow().label === 'winamp' &&
 		hit.px >= hit.w - LYRICS_EDGE &&
 		hit.py >= artTitleHeight(uiState.art.frame);
+	/** Album art beside the player snaps between two heights from its bottom edge, while the EQ
+	 * is docked under the main window to match. */
+	const onArtEdge = (/** @type {Hit | null} */ hit) =>
+		hit?.kind === 'art' &&
+		getCurrentWindow().label === 'winamp' &&
+		(uiState.art.dock === 'left' || uiState.art.dock === 'right') &&
+		artCanBeTall() &&
+		hit.py >= hit.h - LYRICS_EDGE;
 	/** The panel whose close button is held down. */
 	let closing = /** @type {import('./layout.js').PanelKind | null} */ (null);
 	/** Where a press on something draggable started: it becomes a window drag once the mouse
@@ -518,6 +527,8 @@ export function attachInput(canvas, host) {
 
 	canvas.addEventListener('contextmenu', (event) => {
 		event.preventDefault();
+		// Ctrl+click on macOS is a left press as well as this menu, whose release the menu takes.
+		press = null;
 		const { x, y } = canvasPoint(canvas, event);
 		const at = { x: event.clientX, y: event.clientY };
 		const hit = host.hitTest(x, y);
@@ -553,7 +564,9 @@ export function attachInput(canvas, host) {
 		// The window clicked becomes the active one, its titlebar lit (focus.js).
 		setActivePart(hit.kind);
 		if (hit.kind === 'art') {
-			if (onArtClose(hit)) {
+			if (onArtEdge(hit)) {
+				drag = { what: 'artHeight', top: hit.y };
+			} else if (onArtClose(hit)) {
 				uiState.art.closePressed = true;
 				closing = 'art';
 			} else if (event.detail >= 2) {
@@ -612,7 +625,8 @@ export function attachInput(canvas, host) {
 		}
 
 		if (hits(CLOSE_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) {
-			closeWinamp().catch((e) => console.error('close winamp failed', e));
+			// To the tray or quit, by Limusic's "Close to system tray", as Alt+F4.
+			winampClose().catch((e) => console.error('close winamp failed', e));
 			return;
 		}
 		if (hits(OPTIONS_BUTTON_POS, TITLEBAR_BUTTON_SIZE, x, y)) {
@@ -625,7 +639,11 @@ export function attachInput(canvas, host) {
 			return;
 		}
 		if (hits(TITLE_BAR_POS, TITLE_BAR_POS, x, y)) {
-			getCurrentWindow().startDragging();
+			// A drag once the pointer moves with the button held, as every other window's: started
+			// on the press, the request reaches macOS after a quick tap's release, and a window drag
+			// started without a button down there never ends (the window sticks to the cursor and
+			// right-clicks stop reaching it).
+			press = { x: event.screenX, y: event.screenY };
 			return;
 		}
 		if (hits(ABOUT_POS, ABOUT_POS, x, y)) {
@@ -718,17 +736,22 @@ export function attachInput(canvas, host) {
 	canvas.addEventListener('mousemove', (event) => {
 		const { x, y } = canvasPoint(canvas, event);
 		const hit = host.hitTest(x, y);
-		const tip = onWidthEdge(hit) ? 'Drag to resize' : tooltipAt(hit);
+		const tip = onWidthEdge(hit) || onArtEdge(hit) ? 'Drag to resize' : tooltipAt(hit);
 		if (canvas.title !== tip) canvas.title = tip;
 		noteRowHover(hit);
-		const cursor = drag?.what === 'width' || onWidthEdge(hit) ? 'ew-resize' : '';
+		const cursor =
+			drag?.what === 'width' || onWidthEdge(hit) ? 'ew-resize' : drag?.what === 'artHeight' || onArtEdge(hit) ? 'ns-resize' : '';
 		if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
 	});
 
 	window.addEventListener('mousemove', (event) => {
+		// A press whose release never came (a menu took it, as macOS's Ctrl+click menu does, or
+		// the window lost the mouse) mustn't start a drag: a window drag started with no button
+		// down never ends on macOS, and the window follows the cursor.
+		if (press && !(event.buttons & 1)) press = null;
 		if (press && Math.hypot(event.screenX - press.x, event.screenY - press.y) > 3) {
 			press = null;
-			getCurrentWindow().startDragging();
+			winampStartDrag().catch(() => {});
 		}
 		if (!drag) return;
 		const { x: cx, y } = canvasPoint(canvas, event);
@@ -752,6 +775,9 @@ export function attachInput(canvas, host) {
 				uiState[drag.kind].width = width;
 				resizeToLayout();
 			}
+		} else if (drag.what === 'artHeight') {
+			// Whichever height the pointer is nearer: past halfway, the tall one.
+			setArtTall(y - drag.top > (ART_SIDE_H + ART_TALL_H) / 2, false);
 		}
 	});
 
@@ -786,6 +812,8 @@ export function attachInput(canvas, host) {
 			uiState.eq.dragging = null;
 		} else if (drag?.what === 'width') {
 			savePref(`${drag.kind}Width`, uiState[drag.kind].width);
+		} else if (drag?.what === 'artHeight') {
+			savePref('artTall', uiState.art.tall);
 		}
 		drag = null;
 		const eqPressed = uiState.eq.pressed;
