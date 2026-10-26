@@ -978,6 +978,29 @@ function placementItems(text, kind) {
 }
 
 /**
+ * The skins in the Skins submenu: those at the top of the skins folder, then a submenu per folder
+ * in it with the skins anywhere inside, so a set dropped in as a folder stays together.
+ * @param {import('$lib/api').SkinList} list
+ * @param {(path: string | null) => void} switchSkin
+ */
+function skinItems(list, switchSkin) {
+	/** @param {import('$lib/api').SkinList['skins'][number]} s */
+	const item = (s) => ({ text: s.name, checked: list.current === s.path, action: () => switchSkin(s.path) });
+	/** @type {Map<string, import('$lib/api').SkinList['skins']>} */
+	const folders = new Map();
+	for (const s of list.skins.filter((s) => s.folder)) {
+		const top = s.folder.split('/')[0];
+		folders.set(top, [...(folders.get(top) ?? []), s]);
+	}
+	const sub = [...folders].sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+	return [
+		...list.skins.filter((s) => !s.folder).map(item),
+		...(sub.length ? [SEPARATOR] : []),
+		...sub.map(([text, skins]) => ({ text, items: skins.map(item) }))
+	];
+}
+
+/**
  * Winamp's main menu (right-click, the titlebar's options button, the clutterbar's O), laid out
  * like WACUP's, with what Winamp mode actually has.
  * @param {(path: string | null) => void} switchSkin load + remember a skin (`null` = built-in)
@@ -1108,7 +1131,7 @@ export function showMainMenu(switchSkin, at) {
 						{ text: 'Skin browser…', accel: 'Alt+S', action: () => openSkinBrowser().catch(log('skin browser')) },
 						SEPARATOR,
 						{ text: '<Base skin>', checked: list.current === null, action: () => switchSkin(null) },
-						...list.skins.map((s) => ({ text: s.name, checked: list.current === s.path, action: () => switchSkin(s.path) })),
+						...skinItems(list, switchSkin),
 						SEPARATOR,
 						{
 							text: 'Load skin…',
@@ -1120,7 +1143,8 @@ export function showMainMenu(switchSkin, at) {
 								if (typeof picked !== 'string') return;
 								// Same file name as one already in the folder (and not that very file): ask.
 								const fileName = (/** @type {string} */ p) => p.split(/[\\/]/).pop()?.toLowerCase();
-								const same = list.skins.find((s) => fileName(s.path) === fileName(picked) && s.path !== picked);
+								// Only the top of the folder: that's where it's copied to.
+								const same = list.skins.find((s) => !s.folder && fileName(s.path) === fileName(picked) && s.path !== picked);
 								const replace =
 									!!same &&
 									(await ask(`A skin named \u201c${same.name}\u201d is already in the skins folder. Replace it?`, {

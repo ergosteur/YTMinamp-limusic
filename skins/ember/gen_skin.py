@@ -2,7 +2,7 @@
 """Ember: an original classic Winamp 2.x skin, generated procedurally.
 
 Every pixel is drawn here from code (rectangles, bevels, noise, hand-made pixel fonts).
-Writes the bitmaps and text files into out/, zips them flat into Ember.wsz, and draws
+Writes the bitmaps and text files into out/, zips them flat into YTMinamp-Ember.wsz, and draws
 preview.png (the windows assembled from the sprites at their real positions, 2x).
 """
 
@@ -219,12 +219,17 @@ TINY = {
 for _c in "0123456789+-.":
     TINY[_c] = FONT5[_c]
 
-# 7-row wordmark letters for the main titlebar.
+# Wordmark letters for the main titlebar: capitals 7 rows high, lowercase on a 5-row x-height
+# with the p's descender below.
 WORDMARK = {
-    "E": G("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "Y": G("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    "T": G("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
     "M": G("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
-    "B": G("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
-    "R": G("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "i": G(".#.", "...", "##.", ".#.", ".#.", ".#.", "###"),
+    "n": G(".....", ".....", "####.", "#...#", "#...#", "#...#", "#...#"),
+    "a": G(".....", ".....", ".###.", "....#", ".####", "#...#", ".####"),
+    "m": G(".....", ".....", "##.#.", "#.#.#", "#.#.#", "#.#.#", "#.#.#"),
+    "p": G(".....", ".....", "####.", "#...#", "#...#", "#...#", "####.", "#....", "#...."),
 }
 
 
@@ -352,14 +357,14 @@ def main_titlebar(lit):
     rect(a, 0, 0, 1, 14, BODY_HI)
     rect(a, 274, 0, 1, 14, BODY_LO)
     # wordmark
-    word = "EMBER"
+    word = "YTMinamp"
     ww = sum(glyph_w(WORDMARK, c) for c in word) + 2 * (len(word) - 1)
     wx = (275 - ww) // 2
     # grill either side of it, clear of the buttons
     grill(a, 18, 0, wx - 6 - 18, [4, 7], lit)
     grill(a, wx + ww + 6, 0, 240 - (wx + ww + 6), [4, 7], lit)
     top, bot = (AMBER_HI, COPPER) if lit else ((140, 132, 124), (82, 78, 74))
-    draw_text(a, WORDMARK, word, wx, 3, lambda r: lerp(top, bot, r / 6), gap=2, shadow=BODY_LO)
+    draw_text(a, WORDMARK, word, wx, 3, lambda r: lerp(top, bot, min(r, 6) / 6), gap=2, shadow=BODY_LO)
     # an ember dot either side of the name
     for ex in (wx - 4, wx + ww + 2):
         rect(a, ex, 6, 2, 2, AMBER if lit else GREY_DIM)
@@ -1196,8 +1201,8 @@ def write_text_files():
                 "MbBG=#120C08\nMbFG=#D9A066\nFont=Arial\n")
     with open(os.path.join(OUT, "readme.txt"), "w", newline="\r\n") as f:
         f.write(
-            "Ember - an original skin, generated procedurally\n"
-            "=================================================\n\n"
+            "YTMinamp Ember - an original skin, generated procedurally\n"
+            "==========================================================\n\n"
             "A classic (Winamp 2.x format) skin: dark graphite, copper trim, amber displays.\n"
             "Every bitmap was drawn by a script (gen_skin.py) from rectangles, bevels, noise and\n"
             "hand-made pixel fonts; nothing was taken from any other skin, and it carries no\n"
@@ -1238,10 +1243,16 @@ def build():
         SHEETS[name[:-4]] = save(arr, name)
     write_text_files()
     names = list(sheets) + ["pledit.txt", "viscolor.txt", "readme.txt"]
-    wsz = os.path.join(HERE, "Ember.wsz")
+    wsz = os.path.join(HERE, "YTMinamp-Ember.wsz")
     with zipfile.ZipFile(wsz, "w", zipfile.ZIP_DEFLATED) as z:
         for n in names:
             z.write(os.path.join(OUT, n), n)
+    # genex.bmp completed for real Winamp and WACUP: all 24 colours, readable text, and the
+    # standard 112x59 button and scrollbar layout (genex_wacup.py, beside this folder).
+    import sys
+    sys.path.insert(0, os.path.dirname(HERE))
+    import genex_wacup
+    genex_wacup.process(wsz)
     return names
 
 

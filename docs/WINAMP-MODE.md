@@ -57,6 +57,8 @@ merge conflicts, these are the places:
   `set_extra_af` / `af_command` / `af_metadata` (the EQ and analyzer filters), `set_keep_open`
   (Stop after current).
 - `src-tauri/src/lastfm.rs` — `unappimage` made `pub(crate)` so opening the skins folder can use it.
+- `src-tauri/build.rs` — `mod ytminamp_build` and a call to `ytminamp_build::bundle_skins()`
+  (`src-tauri/ytminamp-build.rs`, the skins compiled in).
 - `src-tauri/capabilities/default.json` — every Winamp window's label in the window list
   (`winamp`, `winamp-<panel>`; without it a window can't listen to events, drag or resize, and
   nothing updates).
@@ -555,16 +557,28 @@ at once, a pick coming back as a `winamp-menu` event. Not Tauri's menu API there
 modal (muda spins the GTK loop until the menu reports closing), a menu Wayland dismisses can
 never report it, and while that loop spins Tauri delivers no events and the popup holds a lock —
 the whole UI froze that way, twice. Windows and macOS use Tauri's menu (see `menu.js`). **Skins** lists every `.wsz`/`.zip` in `<app data>/skins`
-(`~/.local/share/com.ytminamp.desktop/skins` on Linux) plus the built-in skin. **Load skin…**
-checks the file parses, copies it into that folder and switches to it. The choice is remembered
+(`~/.local/share/com.ytminamp.desktop/skins` on Linux) plus the built-in skin: those at the top,
+then a submenu per folder in it holding the skins anywhere inside (a few levels down; hidden and
+symlinked folders skipped), so a set of skins can be dropped in, or unzipped there, as a folder.
+Unpacked skins (a folder of a skin's bitmaps) aren't read. **Load skin…** checks the file parses,
+copies it into the top of that folder and switches to it. The choice is remembered
 in `<app data>/winamp.json` (not in Limusic's settings, to keep upstream untouched); a skin that
 has since gone missing or broken falls back to the built-in one.
+
+The app also ships skins, as Winamp's installer does: every `skins/*/YTMinamp-*.wsz` (original
+skins, each made by the `gen_skin.py` beside it, such as YTMinamp-Ember and
+YTMinamp-Frutiger-Aero), plus any a build
+adds (see [Bundled skins](#bundled-skins)). They're compiled in and copied into the skins folder
+the first time it's used (`winamp::place_bundled`), each once: one the user deletes stays deleted,
+a file of the user's by the same name is left alone, and a later build's newer copy replaces the
+old one only while that is unchanged (`winamp.json`'s `bundled` keeps each name and a hash of what
+was written). The built-in default stays Winamp 2.91's base skin.
 
 **Skin browser…** (Alt+S, Winamp's key; first in Skins ▸) opens the Skin Browser
 (`SkinBrowserWindow.svelte`, `skin/skinBrowser.js`), a resizable window in the generic frame and
 the playlist's colours, as Winamp's: a search box (every word typed, anywhere in the name), group
-chips made from the names' first word ("ARTMS", "iPod", "Windows"…, two skins or more), and the
-list, each row with a thumbnail of its main window and the current skin ticked, beside a preview
+chips (a skin's folder in the skins folder, or else its name's first word: "ARTMS", "iPod",
+"Windows"…, two skins or more), and the list, each row with a thumbnail of its main window and the current skin ticked, beside a preview
 of the picked one: its main window (lit, playing), EQ and a short playlist, drawn by the app's own
 renderer from that skin's sprites (`winamp::preview`, which loads a skin without making it
 current), at 1x or smaller to fit. Arrow keys move through the list and the preview follows;
@@ -642,6 +656,21 @@ It links against the distro's own webkit2gtk4.1 and mpv-libs (both present on a
 stock Fedora 44 desktop). App data lives under the `com.ytminamp.desktop` identifier, separate
 from an installed Limusic. The default skin, Winamp 2.91's own, is compiled in
 (`src-tauri/skins/base-2.91.wsz`).
+
+#### Bundled skins
+
+`YTMINAMP_SKINS` adds skins to the ones a build ships (the public ones always), for a build of one's own
+with a set of skins in it. It's a list separated like `PATH` (`:`; `;` on Windows) of `.wsz`/`.zip`
+files or folders, a folder meaning every skin in it and its subfolders (generators' `out/` folders
+skipped); relative paths are from the repo. `scripts/build-fedora.sh` passes it into the container,
+which only sees the repo, so the skins must be inside it:
+
+```bash
+YTMINAMP_SKINS=skins/mine:extra/Some-Skin.wsz scripts/build-fedora.sh
+```
+
+A missing path or two skins with the same file name stop the build (`src-tauri/ytminamp-build.rs`).
+Changing the list rebuilds just the app crate.
 
 ### Driving the GUI from scripts
 

@@ -630,7 +630,8 @@ export const winampAudioInfo = () =>
 
 export interface SkinList {
 	dir: string;
-	skins: { name: string; path: string }[];
+	/** `folder`: the subfolder it's in (`/` between names), `''` at the top of the skins folder. */
+	skins: { name: string; path: string; folder: string }[];
 	/** `null` = the built-in skin. */
 	current: string | null;
 }

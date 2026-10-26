@@ -594,7 +594,57 @@ const DEFAULT_SKIN: &[u8] = include_bytes!("../skins/base-2.91.wsz");
 pub fn skins_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("skins");
     std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
+    static PLACED: std::sync::Once = std::sync::Once::new();
+    PLACED.call_once(|| place_bundled(app, &dir));
     Ok(dir)
+}
+
+/// The skins compiled in: the public ones (`skins/*/YTMinamp-*.wsz`), and any a build adds with `YTMINAMP_SKINS` (`ytminamp-build.rs`).
+mod bundled {
+    include!(concat!(env!("OUT_DIR"), "/bundled_skins.rs"));
+}
+
+/// Copy the compiled-in skins into the skins folder, as Winamp's installer drops its own into
+/// `Skins\`. Each is placed once (`winamp.json`'s `bundled`: name and hash of what was written):
+/// one the user deletes stays deleted, a file of theirs by the same name is left alone, and a
+/// later build's newer copy replaces the old one only while that is unchanged.
+fn place_bundled(app: &AppHandle, dir: &std::path::Path) {
+    let placed = read_prefs(app).bundled;
+    let mut now = placed.clone();
+    for &(name, bytes) in bundled::BUNDLED {
+        let hash = fnv1a(bytes);
+        let path = dir.join(name);
+        let on_disk = std::fs::read(&path).ok().map(|b| fnv1a(&b));
+        let write = should_place(placed.get(name).copied(), on_disk, hash);
+        if write {
+            if let Err(e) = std::fs::write(&path, bytes) {
+                tracing::warn!("winamp: couldn't place {}: {e}", path.display());
+                continue;
+            }
+        }
+        if write || on_disk == Some(hash) {
+            now.insert(name.to_owned(), hash);
+        }
+    }
+    if now != placed {
+        let _ = update_prefs(app, |prefs| prefs.bundled = now);
+    }
+}
+
+/// Whether to write a compiled-in skin (hash `new`), given the hash placed before and the one on
+/// disk: when it was never placed and the name is free, or when the copy placed is still unchanged
+/// and this one differs.
+fn should_place(placed: Option<u64>, on_disk: Option<u64>, new: u64) -> bool {
+    match (placed, on_disk) {
+        (None, None) => true,
+        (Some(old), Some(disk)) => disk == old && disk != new,
+        _ => false,
+    }
+}
+
+/// 64-bit FNV-1a: stable across builds, which `std`'s hasher doesn't promise.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
 
 /// Winamp mode's remembered state, `<app data>/winamp.json`. Kept out of limusic's settings so
@@ -607,6 +657,10 @@ struct Prefs {
     /// whose top-level keys each window updates on its own (see [`merge_ui_prefs`]).
     #[serde(default)]
     ui: serde_json::Map<String, serde_json::Value>,
+    /// Compiled-in skins placed in the skins folder, by file name, with the hash of what was
+    /// written (see [`place_bundled`]).
+    #[serde(default)]
+    bundled: std::collections::BTreeMap<String, u64>,
 }
 
 /// The UI's remembered state (the `ui` object of `winamp.json`).
@@ -686,6 +740,8 @@ pub struct SkinEntry {
     /// File name without the extension, as Winamp's skin menu shows it.
     pub name: String,
     pub path: String,
+    /// The subfolder it's in, relative to the skins folder with `/` between names; `""` at the top.
+    pub folder: String,
 }
 
 #[derive(Serialize)]
@@ -697,24 +753,48 @@ pub struct SkinList {
     pub current: Option<String>,
 }
 
-/// Every `.wsz`/`.zip` in [`skins_dir`], sorted by name.
+/// Every `.wsz`/`.zip` in [`skins_dir`] and its subfolders, sorted by name. A folder of skins can
+/// be dropped in as it is (a set unzipped there, say); hidden folders are skipped, and so are
+/// symlinked ones, which [`in_skins_dir`] wouldn't accept skins from.
 pub fn list(app: &AppHandle) -> Result<SkinList, String> {
     let dir = skins_dir(app)?;
-    let mut skins: Vec<SkinEntry> = std::fs::read_dir(&dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case("wsz") || x.eq_ignore_ascii_case("zip"))
-        })
-        .map(|p| SkinEntry {
-            name: p.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
-            path: p.to_string_lossy().into_owned(),
-        })
-        .collect();
+    let mut skins = Vec::new();
+    collect_skins(&dir, "", 0, &mut skins)?;
     skins.sort_by_key(|s| s.name.to_lowercase());
     Ok(SkinList { dir: dir.to_string_lossy().into_owned(), skins, current: read_prefs(app).skin })
+}
+
+fn is_skin_file(p: &std::path::Path) -> bool {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| x.eq_ignore_ascii_case("wsz") || x.eq_ignore_ascii_case("zip"))
+}
+
+/// The skins in `dir` (`folder` below the skins folder), and in its subfolders to a few levels.
+fn collect_skins(
+    dir: &std::path::Path,
+    folder: &str,
+    depth: usize,
+    skins: &mut Vec<SkinEntry>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
+        let (path, Ok(kind)) = (entry.path(), entry.file_type()) else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if kind.is_dir() {
+            if depth < 4 && !name.starts_with('.') {
+                let sub = if folder.is_empty() { name } else { format!("{folder}/{name}") };
+                // An unreadable subfolder just isn't listed.
+                let _ = collect_skins(&path, &sub, depth + 1, skins);
+            }
+        } else if is_skin_file(&path) {
+            skins.push(SkinEntry {
+                name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                folder: folder.to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Copy a picked skin file into [`skins_dir`] and return its new path. Parsed first, so a file
@@ -734,16 +814,12 @@ pub fn import(app: &AppHandle, src: &str, replace: bool) -> Result<String, Strin
     Ok(dest.to_string_lossy().into_owned())
 }
 
-/// `path` if it's a skin file directly in [`skins_dir`] (the only ones the skin menu offers),
+/// `path` if it's a skin file in [`skins_dir`] or a folder in it (the ones the skin menu offers),
 /// else an error: the webview names the file, so it doesn't get to read others.
 fn in_skins_dir(app: &AppHandle, path: &str) -> Result<(), String> {
     let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
     let dir = std::fs::canonicalize(skins_dir(app)?).map_err(|e| e.to_string())?;
-    let skin_ext = path
-        .extension()
-        .and_then(|x| x.to_str())
-        .is_some_and(|x| x.eq_ignore_ascii_case("wsz") || x.eq_ignore_ascii_case("zip"));
-    if path.parent() == Some(dir.as_path()) && skin_ext {
+    if path.starts_with(&dir) && path != dir && is_skin_file(&path) {
         Ok(())
     } else {
         Err(format!("{} isn't a skin in the skins folder", path.display()))
@@ -939,6 +1015,43 @@ mod tests {
         let base = skin::load(DEFAULT_SKIN).unwrap();
         for name in FROM_BASE {
             assert!(base.sprite(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn bundled_skins_are_placed_once_and_updated_only_while_untouched() {
+        assert!(should_place(None, None, 1)); // new
+        assert!(!should_place(None, Some(2), 1)); // the user's own file of that name
+        assert!(!should_place(Some(1), None, 1)); // deleted by the user
+        assert!(should_place(Some(1), Some(1), 2)); // a newer build's copy
+        assert!(!should_place(Some(1), Some(3), 2)); // changed by the user
+        assert!(!should_place(Some(1), Some(1), 1)); // already there
+    }
+
+    #[test]
+    fn skins_are_found_in_subfolders_but_not_hidden_ones() {
+        let root = std::env::temp_dir().join(format!("ytminamp-skins-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["ARTMS/Light", ".hidden", "Empty"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in ["Top.wsz", "ARTMS/ARTMS.wsz", "ARTMS/Light/ARTMS-Light.WSZ", ".hidden/No.wsz"] {
+            std::fs::write(root.join(file), b"").unwrap();
+        }
+        std::fs::write(root.join("ARTMS/readme.txt"), b"").unwrap();
+        let mut skins = Vec::new();
+        collect_skins(&root, "", 0, &mut skins).unwrap();
+        let mut found: Vec<_> = skins.iter().map(|s| (s.folder.as_str(), s.name.as_str())).collect();
+        found.sort();
+        assert_eq!(found, [("", "Top"), ("ARTMS", "ARTMS"), ("ARTMS/Light", "ARTMS-Light")]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_skins_always_shipped_are_compiled_in_and_parse() {
+        for name in ["YTMinamp-Ember.wsz", "YTMinamp-Frutiger-Aero.wsz"] {
+            let (_, bytes) = bundled::BUNDLED.iter().find(|(n, _)| *n == name).unwrap();
+            skin::load(bytes).unwrap();
         }
     }
 }

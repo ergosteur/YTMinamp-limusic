@@ -36,7 +36,7 @@
 	/** The first listing picks the current skin; later ones keep the pick. */
 	let firstList = true;
 
-	/** @type {{ name: string, path: string | null }[]} */
+	/** @type {{ name: string, path: string | null, folder: string }[]} */
 	let skins = $state([]);
 	let current = $state(/** @type {string | null} */ (null));
 	let query = $state('');
@@ -50,13 +50,13 @@
 	const close = () => api.closeWinampPanel('skins').catch((e) => console.error('close failed', e));
 	const font = $derived(`${pledit.font ? `"${pledit.font}", ` : ''}Arial, sans-serif`);
 	const groups = $derived(groupsOf(skins.filter((s) => s.path !== null)));
-	/** Every word typed somewhere in the name, within the group picked. */
+	/** Every word typed somewhere in the name or its folder, within the group picked. */
 	const shown = $derived.by(() => {
 		const words = query.toLowerCase().split(/\s+/).filter(Boolean);
 		return skins.filter(
 			(s) =>
-				(!group || (s.path !== null && groupOf(s.name).toLowerCase() === group.toLowerCase())) &&
-				words.every((w) => s.name.toLowerCase().includes(w))
+				(!group || (s.path !== null && groupOf(s).toLowerCase() === group.toLowerCase())) &&
+				words.every((w) => `${s.folder}/${s.name}`.toLowerCase().includes(w))
 		);
 	});
 	const pickedSkin = $derived(skins.find((s) => s.path === picked) ?? null);
@@ -78,7 +78,7 @@
 
 	async function refresh() {
 		const list = await api.listWszSkins();
-		skins = [{ name: BASE, path: null }, ...list.skins.map((s) => ({ name: s.name, path: s.path }))];
+		skins = [{ name: BASE, path: null, folder: '' }, ...list.skins.map((s) => ({ name: s.name, path: s.path, folder: s.folder }))];
 		current = list.current;
 		if (firstList) picked = current;
 		firstList = false;
@@ -123,7 +123,8 @@
 		const file = await open({ title: 'Load Winamp skin', filters: [{ name: 'Winamp skins', extensions: ['wsz', 'zip'] }] });
 		if (typeof file !== 'string') return;
 		const fileName = (/** @type {string} */ p) => p.split(/[\\/]/).pop()?.toLowerCase();
-		const same = skins.find((s) => s.path && fileName(s.path) === fileName(file) && s.path !== file);
+		// Only the top of the folder: that's where it's copied to.
+		const same = skins.find((s) => s.path && !s.folder && fileName(s.path) === fileName(file) && s.path !== file);
 		const replace =
 			!!same &&
 			(await ask(`A skin named “${same.name}” is already in the skins folder. Replace it?`, {
@@ -339,7 +340,7 @@
 						style:font-family={font}
 						onclick={() => (picked = skin.path)}
 						ondblclick={() => apply(skin.path)}
-						title={skin.name}
+						title={skin.folder ? `${skin.folder}/${skin.name}` : skin.name}
 					>
 						{#if skin.path === null}
 							<span class="block h-[29px] w-[69px] shrink-0 border border-dashed opacity-50" style:border-color={pledit.normal ?? '#00ff00'}></span>

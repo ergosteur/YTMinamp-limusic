@@ -39,6 +39,7 @@ podman run --rm \
   -e CARGO_PROFILE_RELEASE_STRIP="$strip" \
   -e RPM_AS="$rpm_as" \
   -e TAURI_BUILD_CONFIG="$config" \
+  -e YTMINAMP_SKINS="${YTMINAMP_SKINS:-}" \
   -e RUSTFLAGS="-C link-arg=-fuse-ld=mold" \
   -w /src \
   "$image" bash -euo pipefail -c '

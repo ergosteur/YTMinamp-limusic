@@ -1,3 +1,6 @@
+#[path = "ytminamp-build.rs"]
+mod ytminamp_build;
+
 fn main() {
     // Last.fm API credentials live in a gitignored `lastfm.keys` next to this file (the repo is
     // public — they must never be tracked). Format: `LIMUSIC_LASTFM_API_KEY=…` and
@@ -17,6 +20,7 @@ fn main() {
     // tauri-build watches tauri.conf.json but not the icons it embeds, so editing a PNG here
     // leaves `generate_context!` emitting the old `default_window_icon` (window, tray, taskbar).
     println!("cargo:rerun-if-changed=icons");
+    ytminamp_build::bundle_skins();
 
     tauri_build::build()
 }

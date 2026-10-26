@@ -31,23 +31,25 @@ export function requestSkin(path) {
 }
 
 /**
- * A skin's group: the first word of its name ("iPod-mini-Pink" → "iPod"), as the names of a set
- * share it. @param {string} name
+ * A skin's group: the folder it's in under the skins folder (the top one), or else the first word
+ * of its name ("iPod-mini-Pink" → "iPod"), as the names of a set share it.
+ * @param {{ name: string, folder?: string }} skin
  */
-export function groupOf(name) {
+export function groupOf({ name, folder }) {
+	if (folder) return folder.split('/')[0];
 	return name.split(/[-_ .]+/)[0] || name;
 }
 
 /**
  * The groups with two skins or more, biggest first, for the chips over the list.
- * @param {{ name: string }[]} skins
+ * @param {{ name: string, folder?: string }[]} skins
  * @returns {{ group: string, count: number }[]}
  */
 export function groupsOf(skins) {
 	/** @type {Map<string, { group: string, count: number }>} */
 	const groups = new Map();
-	for (const { name } of skins) {
-		const group = groupOf(name);
+	for (const skin of skins) {
+		const group = groupOf(skin);
 		const key = group.toLowerCase();
 		const g = groups.get(key) ?? { group, count: 0 };
 		g.count++;
