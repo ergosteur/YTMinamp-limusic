@@ -28,8 +28,9 @@ and `--out DIR` writes the .wsz files and previews to DIR (sheets in `DIR/out/`)
 
 Both share the VFD content: black glass (#040A0B) with teal phosphor (#3CF2D2) and dim ghosts of
 every unlit segment, amber-orange (#FF8A1E) for the bar caps, lozenges, thumbs and active
-indicators. Seven-segment time digits over ghost eights; the song title (the app's TrueType
-title) and the small readouts are teal. The volume and balance are segment bars, the EQ
+indicators. 5x7 dot-matrix time digits over ghost dots; the song title and the small readouts
+are teal. text.bmp is a character display's font: each cell a 4x5 block of ghost dots with the
+letter lit, so the bitmap title (Options) reads as a row of character cells. The volume and balance are segment bars, the EQ
 ten bands of segment columns capped in orange, the EQ graph a dotted teal zero line with an orange
 curve. viscolor: teal bars with amber tops, orange peaks, ghost dots. Toggles (shuffle, repeat,
 EQ ON/AUTO, PRESETS, the clutterbar letters) are translucent aqua keys with an orange LED when on.

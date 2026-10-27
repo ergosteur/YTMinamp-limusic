@@ -17,7 +17,10 @@ const LARGE = 3;
 export function libraryTokens(g) {
 	const fg = readable(g.itemFg, [g.itemBg], TEXT);
 	const muted = mixHex(fg, 0.1, g.itemBg);
-	const primary = readable(g.selection, [g.itemBg, g.windowBg], LARGE);
+	// The pages' and the sidebar's own: one colour can't read on both when one is light and the
+	// other dark (an LCD-green list in a black body), and black, the fallback, then fails the pages.
+	const primary = readable(g.selection, [g.itemBg], LARGE);
+	const sidebarPrimary = readable(g.selection, [g.windowBg], LARGE);
 	const accent = mixHex(g.selection, 0.6, g.itemBg);
 	const sidebarFg = readable(g.windowText, [g.windowBg], TEXT);
 	const headerText = readable(g.headerText, [g.headerBg], TEXT);
@@ -41,12 +44,12 @@ export function libraryTokens(g) {
 		'--ring': primary,
 		'--sidebar': g.windowBg,
 		'--sidebar-foreground': sidebarFg,
-		'--sidebar-primary': primary,
-		'--sidebar-primary-foreground': readable(g.itemFg, [primary], TEXT),
+		'--sidebar-primary': sidebarPrimary,
+		'--sidebar-primary-foreground': readable(g.itemFg, [sidebarPrimary], TEXT),
 		'--sidebar-accent': g.headerBg,
 		'--sidebar-accent-foreground': headerText,
 		'--sidebar-border': g.divider,
-		'--sidebar-ring': primary,
+		'--sidebar-ring': sidebarPrimary,
 		'--radius': '0rem'
 	};
 }

@@ -348,6 +348,8 @@
 					alwaysOnTop: uiState.alwaysOnTop,
 					doubleSize: uiState.doubleSize,
 					timeRemaining: uiState.timeRemaining,
+					marqueeScroll: uiState.marqueeScroll,
+					bitmapTitle: uiState.bitmapTitle,
 					shuffle: !!playback.queue.shuffle,
 					repeat: playback.queue.repeat ?? 'off'
 				},

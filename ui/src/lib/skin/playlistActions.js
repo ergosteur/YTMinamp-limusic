@@ -2,7 +2,7 @@
 // the queue as one) on Limusic's real queue. Only the upcoming tracks can move or go: the playing row and the ones
 // before it stay put, the same rule Limusic's own queue panel follows.
 import * as api from '$lib/api';
-import { auth, ownedByUser, playFrom, playback } from '$lib/player.svelte';
+import { auth, playFrom, playback } from '$lib/player.svelte';
 import { importError, isSpotifyLink } from '$lib/import.svelte';
 import { parseYtLink } from '$lib/ytlink';
 import { flashMarquee } from './skinApi.js';
@@ -87,9 +87,6 @@ export function refreshLibrary() {
 		.then((items) => {
 			const playlists = items.filter((item) => item.kind === 'playlist');
 			known = playlists;
-			// Ask now, behind the menus, which of the rest songs can go into: once the account is
-			// known, or the owner-name check would vouch for none and every page would be asked.
-			knowAccount().then(() => playlists.forEach((p) => vouched(p) || canAddTo(p)));
 			return playlists;
 		})
 		.finally(() => (fetching = null));
@@ -100,70 +97,14 @@ export function refreshLibrary() {
 const NEVER = (/** @type {import('$lib/api').BrowseItem} */ p) => p.id === api.ON_REPEAT_ID || p.id === api.LIKED_MUSIC_ID;
 
 /**
- * Accepts songs without a network check: a local playlist, or the user's own by Limusic's
- * owner-name check (`ownedByUser`, the subtitle's owner against the account's name).
- * @param {import('$lib/api').BrowseItem} p
- */
-const vouched = (p) => !NEVER(p) && (api.isLocalPlaylist(p.id) || ownedByUser(p));
-
-/** Playlist id → whether its own page says songs can go in (`owned`, or `collaborative`, which
- * also covers the user's own with collaboration on: that has no edit header). Asked once a run;
- * a failure is forgotten, to be asked again. */
-const addable = new Map();
-let asking = 0;
-/** @type {(() => void)[]} */
-const asks = [];
-
-/**
- * Whether songs can go into `p`, from its page: two at a time, so a library's worth of saved
- * playlists doesn't land on YouTube at once.
- * @param {import('$lib/api').BrowseItem} p
- * @returns {Promise<boolean>}
- */
-function canAddTo(p) {
-	let answer = addable.get(p.id);
-	if (!answer) {
-		answer = new Promise((resolve) => {
-			asks.push(() => {
-				api
-					.getPlaylist(p.id)
-					.then((page) => resolve(page.owned || page.collaborative))
-					.catch(() => {
-						addable.delete(p.id);
-						resolve(false);
-					})
-					.finally(() => {
-						asking--;
-						nextAsk();
-					});
-			});
-			nextAsk();
-		});
-		addable.set(p.id, answer);
-	}
-	return answer;
-}
-
-function nextAsk() {
-	while (asking < 2 && asks.length) {
-		asking++;
-		/** @type {() => void} */ (asks.shift())();
-	}
-}
-
-/**
- * The playlists in `playlists` that accept songs: local ones and the user's own straight away, and
- * the rest (saved from someone else, or a collaborator's) as their pages say, waiting `wait` ms at
- * most for answers still coming: one that hasn't come is left out this time.
+ * The playlists in `playlists` that accept songs: all but On Repeat, Liked Music and the ones the
+ * playlist membership crawl found saved from someone else (`readOnlyPlaylists`, as Limusic's own
+ * picker does). A playlist the crawl hasn't seen yet still shows.
  * @param {import('$lib/api').BrowseItem[]} playlists
- * @param {number} [wait]
  */
-export async function addablePlaylists(playlists, wait = 800) {
-	await knowAccount();
-	const candidates = playlists.filter((p) => !NEVER(p));
-	const late = new Promise((resolve) => setTimeout(() => resolve(false), wait));
-	const verdicts = await Promise.all(candidates.map((p) => vouched(p) || Promise.race([canAddTo(p), late])));
-	return candidates.filter((_, i) => verdicts[i]);
+export async function addablePlaylists(playlists) {
+	const readOnly = await api.readOnlyPlaylists().catch(() => /** @type {string[]} */ ([]));
+	return playlists.filter((p) => !NEVER(p) && !readOnly.includes(p.id));
 }
 
 /**

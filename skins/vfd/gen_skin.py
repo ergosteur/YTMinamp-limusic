@@ -4,7 +4,7 @@
 Two themes from one procedural generator: "vfd", a black gloss faceplate in a silver surround
 with one wide VFD window, and "vfd-silver", a satin silver faceplate with the keys on the silver
 and only the displays as VFD glass. Teal phosphor segments (unlit ones showing as dim ghosts)
-with amber-orange caps, lozenges and indicators, seven-segment time digits, spectrum-analyzer
+with amber-orange caps, lozenges and indicators, dot-matrix time digits, spectrum-analyzer
 bars for the volume, balance and EQ, rubber and translucent aqua keys, a lit rotary knob in the
 About spot. Everything is drawn here from code: gradients, anti-aliased masks, hand-made pixel
 fonts, and a system bold italic sans (Liberation Sans, else DejaVu Sans) for the faceplate print.
@@ -447,33 +447,42 @@ def line_m(w, h, pts, width):
 
 
 # ------------------------------------------------------------------------------------------
-# Seven-segment digits (9 x 13 cells): thin bars, 2px verticals, a gap at every joint
+# Dot-matrix digits (9 x 13 cells): a 5x7 matrix on a 2px pitch, unlit dots showing as ghosts
 # ------------------------------------------------------------------------------------------
 
-SEG = {
-    "a": [(0, c) for c in range(2, 7)],
-    "g": [(6, c) for c in range(2, 7)],
-    "d": [(12, c) for c in range(2, 7)],
-    "f": [(r, c) for r in range(1, 6) for c in (1, 2)],
-    "b": [(r, c) for r in range(1, 6) for c in (6, 7)],
-    "e": [(r, c) for r in range(7, 12) for c in (1, 2)],
-    "c": [(r, c) for r in range(7, 12) for c in (6, 7)],
+DOT57 = {
+    "0": G(".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
+    "1": G("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": G(".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    "3": G("#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."),
+    "4": G("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": G("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": G("..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": G("#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."),
+    "8": G(".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "9": G(".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."),
+    "-": G(".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    " ": G(".....", ".....", ".....", ".....", ".....", ".....", "....."),
 }
-DIGIT_SEGS = {0: "abcdef", 1: "bc", 2: "abged", 3: "abgcd", 4: "fgbc", 5: "afgcd", 6: "afgedc", 7: "abc",
-              8: "abcdefg", 9: "abcdfg"}
 
 
-def seven_seg_part(a, x, y, segs, col):
-    for s in segs:
-        for r, c in SEG[s]:
-            px(a, x + c, y + r, col)
-
-
-def seven_seg(a, x, y, lit_segs):
-    """A digit cell: lit segments in phosphor, the rest as ghosts."""
+def dot_char(a, ch, x, y, col=None):
+    """A digit cell: lit dots in phosphor with half-lit bridges between lit neighbours (so it
+    reads at 1x like a glowing matrix), every other dot a ghost. col=None draws only ghosts."""
     rect(a, x, y, 9, 13, VF_VFD)
-    seven_seg_part(a, x, y, [s for s in SEG if s not in lit_segs], VF_GHOST_DIGIT)
-    seven_seg_part(a, x, y, lit_segs, VF_TEXT)
+    g = DOT57[ch]
+    on = [[col is not None and g[r][c] == "#" for c in range(5)] for r in range(7)]
+    half = lerp(VF_VFD, col, 0.45) if col else None
+    for r in range(7):
+        for c in range(5):
+            if not on[r][c]:
+                px(a, x + 2 * c, y + 2 * r, VF_GHOST_DIGIT)
+                continue
+            px(a, x + 2 * c, y + 2 * r, col)
+            if c < 4 and on[r][c + 1]:
+                px(a, x + 2 * c + 1, y + 2 * r, half)
+            if r < 6 and on[r + 1][c]:
+                px(a, x + 2 * c, y + 2 * r + 1, half)
 
 
 # ------------------------------------------------------------------------------------------
@@ -705,10 +714,11 @@ def vf_display_furniture(a):
     """The main window's VFD contents that never change: brackets, ghost digits, legends."""
     vf_chevron(a, 21, 42, 16, (200, 236, 228), "left")
     for x in (48, 60, 78, 90):
-        seven_seg(a, x, 26, "")
-    seven_seg_part(a, 36, 26, "g", VF_GHOST_DIGIT)
-    rect(a, 72, 29, 2, 2, VF_TEAL)
-    rect(a, 72, 34, 2, 2, VF_TEAL)
+        dot_char(a, " ", x, 26)
+    for c in range(5):
+        px(a, 36 + 2 * c, 32, VF_GHOST_DIGIT)
+    px(a, 73, 30, VF_TEAL)
+    px(a, 73, 34, VF_TEAL)
     draw_text(a, VF_TINY, "ST TP TA AF PTY RDS", 24, 62, VF_LABEL)
     # right: the title row, lozenges round kbps / kHz
     for xx in range(110, 266, 2):
@@ -772,15 +782,14 @@ def vf_make_monoster():
 
 
 def vf_make_numbers(ex):
-    """Seven-segment VFD digits; every unlit segment shows as a ghost. nums_ex: the blank cell
+    """5x7 dot-matrix VFD digits; every unlit dot shows as a ghost. nums_ex: the blank cell
     (all ghosts) and the minus."""
     a = new(108 if ex else 99, 13, VF_VFD)
     for n in range(10):
-        seven_seg(a, 9 * n, 0, DIGIT_SEGS[n])
+        dot_char(a, str(n), 9 * n, 0, VF_TEXT)
     if ex:
-        seven_seg(a, 90, 0, "")
-        rect(a, 99, 0, 9, 13, VF_VFD)
-        seven_seg_part(a, 99, 0, "g", VF_TEXT)
+        dot_char(a, " ", 90, 0)
+        dot_char(a, "-", 99, 0, VF_TEXT)
     return a
 
 
@@ -796,13 +805,20 @@ def vf_make_playpaus():
 
 
 def vf_make_text():
+    """A character display's font: each 5x6 cell a 4x5 block of dots, the glyph lit (narrow
+    glyphs centred) and every other dot a ghost, with a dark gap column and row between cells.
+    The space cell is all ghosts, so the title box reads as a row of unlit character cells."""
     a = new(155, 18, VF_VFD)
     for row, chars in enumerate(FONT_GRID):
         for col, ch in enumerate(chars):
-            if ch is None or ch == " ":
+            if ch is None:
+                continue
+            x, y = col * 5, row * 6
+            rect(a, x, y, 4, 5, VF_GHOST)
+            if ch == " ":
                 continue
             k = ch if ch in FONT5 else ch.upper()
-            draw_text(a, FONT5, k, col * 5, row * 6, VF_TEXT)
+            draw_text(a, FONT5, k, x + max(0, (4 - glyph_w(FONT5, k)) // 2), y, VF_TEXT)
     return a
 
 
@@ -1694,7 +1710,7 @@ def write_text_files():
     text = (f"{readme_title()} - a vacuum fluorescent display head unit, {T.look}.\n"
             "\n"
             "A classic (Winamp 2.x format) skin: teal phosphor segments with dim ghosts of the\n"
-            "unlit ones, amber-orange caps and indicators, seven-segment time digits and\n"
+            "unlit ones, amber-orange caps and indicators, dot-matrix time digits and\n"
             "spectrum-analyzer bars on black glass. Every bitmap was drawn by a script\n"
             "(gen_skin.py); nothing was taken from any other skin or product, and it carries\n"
             "no logos or marks.\n"

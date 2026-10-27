@@ -6,22 +6,27 @@
 
 **Limusic, the native YouTube Music client, with a classic Winamp 2.x skin mode.**
 
-<img src="./docs/images/ytminamp-winamp-mode.jpg" alt="Winamp mode: main window, equalizer, search, playlist and album art down the left, synced Korean lyrics in the middle, the MilkDrop visualizer on the right" width="100%">
+<img src="./docs/images/ytminamp-winamp-mode.webp" alt="Winamp mode in the included Ember skin: main window, equalizer, search, playlist and album art down the left, the Media Library on an artist page, synced Korean lyrics with their romanization, and the MilkDrop visualizer on the right" width="100%">
 
 **[Download the latest build](https://github.com/ergosteur/YTMinamp-limusic/releases)** (Linux, Windows, macOS)
 
 </div>
 
-YTMinamp is a fork of [Limusic](https://github.com/SimoHypers/limusic) that adds a second "mini
-player", opened from the titlebar next to Limusic's own mini-player button, drawn from real
-`.wsz` Winamp skins:
+YTMinamp is a fork of [Limusic](https://github.com/SimoHypers/limusic) that starts in a Winamp
+mode drawn from real `.wsz` Winamp 2.x skins, playing through Limusic's own playback:
 
 - the main window, equalizer, playlist editor, search, album art and lyrics (synced, zoomable,
   with Limusic's romanization and translations), each docked in the stack or floating;
+- a Media Library: Limusic's pages (home, search, library, albums, artists, playlists) in the
+  skin's frame and colours;
 - a spectrum analyzer and a MilkDrop visualizer ([Butterchurn](https://github.com/jberg/butterchurn));
-- Winamp's keyboard shortcuts, skins from a folder, double size, always on top.
+- 14 original skins included (CC0), a Skin Browser with live previews, and any classic skin
+  from a folder, subfolders included;
+- Open URL for YouTube, YouTube Music and Spotify links, and import from Spotify;
+- Winamp's menus and keyboard shortcuts, double size, always on top, close to tray.
 
-Everything else is upstream Limusic, unmodified where possible so upstream updates merge cleanly.
+Limusic's own window is still there (Alt+M, or Switch to Limusic mode). Everything else is
+upstream Limusic, unmodified where possible so upstream updates merge cleanly.
 See [docs/WINAMP-MODE.md](docs/WINAMP-MODE.md), including the
 [credits](docs/WINAMP-MODE.md#credits) for [Webamp](https://github.com/captbaritone/webamp),
 Butterchurn and the skin authors. An unofficial fan project, not affiliated with Winamp or
