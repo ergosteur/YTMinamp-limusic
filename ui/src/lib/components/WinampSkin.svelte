@@ -9,8 +9,7 @@
 	import { logUi } from '$lib/errlog';
 	import { winampAudioInfo } from '$lib/api';
 	import { APP_NAME } from '../skin/brand.js';
-	import { decodeAllSprites } from '../skin/render/spritesheet.js';
-	import { pinOneToOnePixels } from '../skin/pixels.js';
+	import { pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { drawEqualizer } from '../skin/render/equalizer.js';
 	import { drawLyrics, lyricsViewRect } from '../skin/render/lyrics.js';
 	import { analyzerMoving, drawAnalyzer } from '../skin/render/visualizer.js';
@@ -20,7 +19,7 @@
 	import { KIND_BUTTON_W, kindLabel } from '../skin/searchKinds.js';
 	import { attachKeys, runKey } from '../skin/keys.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
-	import { applyRegionClip, drawMainWindow, sizeCanvas } from '../skin/render/mainWindow.js';
+	import { applyRegionClip, drawMainWindow } from '../skin/render/mainWindow.js';
 	import { artFrame, drawAlbumArt, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { goto } from '$app/navigation';
 	import LibraryPages from './LibraryPages.svelte';
@@ -34,6 +33,9 @@
 	import { dockedLayout, hitLayout } from '../skin/layout.js';
 	import {
 		ART_CAPTION_EVENT,
+		STOPPED_EVENT,
+		markStopped,
+		followStopped,
 		loadAccount,
 		searchWelcome,
 		LLAMA_INTRO,
@@ -53,6 +55,8 @@
 		setArt,
 		setPanelOpen,
 		knowSettings,
+		SKIN_RELOAD_EVENT,
+		skinSprites,
 		tickerToast,
 		togglePanel
 	} from '../skin/skinApi.js';
@@ -94,11 +98,23 @@
 	/** The layout the canvas size/clip were last set for; null = not set yet. */
 	let shapedFor = /** @type {string | null} */ (null);
 
-	/** "Artist - Title", as the playlist shows it. */
+	/** Seconds as Winamp's title shows a length: minutes and seconds, "2:54", "62:03". */
+	const clock = (/** @type {number} */ secs) =>
+		`${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
+
+	/** "Artist - Title", as the playlist shows it; with the option on, as Winamp's: its place in
+	 * the playlist before it and its length after, "2. Artist - Title (2:54)". */
 	function nowTitle() {
 		const now = playback.now;
 		if (!now) return welcome();
-		const title = now.artists ? `${now.artists} - ${now.title}` : now.title;
+		let title = now.artists ? `${now.artists} - ${now.title}` : now.title;
+		if (uiState.titleNumbers) {
+			const i = playback.queue.currentIndex;
+			const row = playback.queue.items[i];
+			if (row?.video_id === now.videoId) title = `${i + 1}. ${title}`;
+			const length = row?.duration || (playback.duration > 0 ? clock(playback.duration) : '');
+			if (length) title = `${title} (${length})`;
+		}
 		// The llama intro cued (a first run, About's Cue the Llama) and not started: the welcome
 		// still, the intro after it, until Play.
 		const cued = now.videoId === LLAMA_INTRO.video_id && playback.paused && playback.position < 0.5;
@@ -160,7 +176,7 @@
 			const mine = ++skinLoads;
 			return loading
 				.then(async (payload) => {
-					const decoded = await decodeAllSprites(payload.sprites);
+					const decoded = await skinSprites(payload);
 					if (mine !== skinLoads) return;
 					if (!decoded.get('main')) throw new Error('skin has no main.bmp');
 					viscolor = payload.viscolor;
@@ -276,6 +292,7 @@
 		// The lyrics' size, changed with Ctrl+wheel over a floating lyrics window.
 		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
 		const unlistenCaption = listen(ART_CAPTION_EVENT, (e) => setArtCaption(/** @type {boolean} */ (e.payload)));
+		const unlistenStopped = listen(STOPPED_EVENT, markStopped);
 		const detachKeys = attachKeys();
 		// A newer build: in the title while paused, and first in the main menu.
 		const stopUpdateWatch = watchForUpdates();
@@ -289,6 +306,8 @@
 		});
 		// The Skin Browser's Apply (its own window): switched here, where the skin lives.
 		const unlistenSkinSelect = listen(SKIN_SELECT_EVENT, (e) => applySkin(selectSkin(/** @type {string | null} */ (e.payload))));
+		// Options ▸ Allow skin transparency: the same skin again, then every other window follows.
+		const unlistenSkinReload = listen(SKIN_RELOAD_EVENT, () => applySkin(loadSkin()));
 		const unlistenClosed = listen('winamp-panel-closed', (e) => {
 			const kind = /** @type {import('../skin/layout.js').PanelKind | 'url' | 'milkdrop' | 'eqsave' | 'fileinfo' | 'about' | 'update' | 'newpl' | 'skins'} */ (e.payload);
 			// The Open URL, save-preset, file info, about, update and new-playlist windows: nothing
@@ -306,17 +325,16 @@
 
 		stopLoop = startRenderLoop((nowMs) => {
 			if (sprites.size === 0) return;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
 			const layout = dockedLayout();
+			const ctx = prepareCanvas(canvas, layout.width, layout.height);
+			if (!ctx) return;
 			const shape = layout.panels.map((p) => `${p.kind}:${p.x},${p.y},${p.w},${p.h}`).join(' ');
 			if (shapedFor !== shape) {
 				shapedFor = shape;
-				sizeCanvas(canvas, layout.width, layout.height);
 				applyRegionClip(canvas, region, layout.mainX, layout.panels);
 				mainX = layout.mainX;
 			}
-			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			ctx.clearRect(0, 0, layout.width, layout.height);
 			// The main window and the stack draw at their own origin; docked left, art pushes them right.
 			ctx.save();
 			ctx.translate(layout.mainX, 0);
@@ -331,6 +349,9 @@
 					kbps: playback.now ? uiState.kbps : null,
 					khz: playback.now ? uiState.khz : null,
 					playing: !playback.paused,
+					paused: !!playback.now && playback.paused && !uiState.stopped,
+					stopped: uiState.stopped,
+					pauseBlink: uiState.pauseBlink,
 					positionSecs: uiState.draggingSeek ? uiState.draggingPositionSecs : playback.position,
 					durationSecs: playback.duration,
 					volume: uiState.draggingVolume ? uiState.draggingVolumeValue : playback.volume,
@@ -358,6 +379,7 @@
 			ctx.restore();
 			followQueue();
 			followStopAfter();
+			followStopped();
 			const searchPanel = layout.panels.find((p) => p.kind === 'search');
 			if (kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
 			const lyricsPanel = layout.panels.find((p) => p.kind === 'lyrics');
@@ -396,16 +418,20 @@
 			}
 			placeSearchInput(searchPanel ?? null);
 		});
+		const analyzerHeld = () => uiState.testPattern === null && !!playback.now && playback.paused && !uiState.stopped;
 		const stopVizLoop = startRenderLoop(
 			(nowMs) => {
 				const on = uiState.visMode === 'analyzer' && sprites.size > 0;
 				vizCanvas.style.display = on ? 'block' : 'none';
-				const ctx = vizCanvas.getContext('2d');
-				if (!on || !ctx) return;
-				ctx.setTransform(1, 0, 0, 1, -VIS_POS.x, -VIS_POS.y);
-				drawAnalyzer(ctx, viscolor, analyzerColumns(nowMs));
+				if (!on) return;
+				const ctx = prepareCanvas(vizCanvas, VIS_POS.w, VIS_POS.h);
+				if (!ctx) return;
+				ctx.translate(-VIS_POS.x, -VIS_POS.y);
+				// Paused, the bars hold where they were, as Winamp's do, rather than falling (a test
+				// pattern picked in the menu keeps moving).
+				drawAnalyzer(ctx, viscolor, analyzerColumns(nowMs), analyzerHeld());
 			},
-			(nowMs) => uiState.visMode === 'analyzer' && analyzerMoving(analyzerColumns(nowMs))
+			(nowMs) => uiState.visMode === 'analyzer' && !analyzerHeld() && analyzerMoving(analyzerColumns(nowMs))
 		);
 
 		return () => {
@@ -420,10 +446,12 @@
 			unlistenMarquee.then((f) => f());
 			unlistenClosed.then((f) => f());
 			unlistenSkinSelect.then((f) => f());
+			unlistenSkinReload.then((f) => f());
 			unlistenKey.then((f) => f());
 			unlistenMainMenu.then((f) => f());
 			unlistenZoom.then((f) => f());
 			unlistenCaption.then((f) => f());
+			unlistenStopped.then((f) => f());
 			detachKeys();
 			stopUpdateWatch();
 		};
@@ -435,13 +463,8 @@
 	<canvas
 		bind:this={vizCanvas}
 		class="pointer-events-none absolute"
-		width={VIS_POS.w}
-		height={VIS_POS.h}
 		style:left="{mainX + VIS_POS.x}px"
 		style:top="{VIS_POS.y}px"
-		style:width="{VIS_POS.w}px"
-		style:height="{VIS_POS.h}px"
-		style:image-rendering="pixelated"
 	></canvas>
 	<input
 		bind:this={searchInput}

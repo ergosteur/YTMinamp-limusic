@@ -44,13 +44,28 @@ export const uiState = {
 	vizColumns: /** @type {number[] | null} */ (null),
 	/** When they came (`performance.now()`): stale columns mean no live feed (testPattern.js). */
 	vizAt: 0,
+	/** A test pattern picked in the analyzer menu (testPattern.js `PATTERN_NAMES` index), shown
+	 * instead of the live feed even paused or stopped, for this session; null: live levels. */
+	testPattern: /** @type {number | null} */ (null),
 	/** Open the app in Winamp mode rather than the full window (main menu; winamp.rs `start_in_winamp`). */
 	startInWinamp: true,
+	/** YTMinamp's skin extension, see-through EQ slider backgrounds (Options; skinApi.js `skinSprites`);
+	 *  off: skins drawn exactly as Winamp draws them. */
+	skinTransparency: true,
 	/** Scroll a song title too long for its box (the title's right-click menu); off: cut it short. */
 	marqueeScroll: true,
 	/** Draw the title in the skin's text.bmp when every character is in it, as Winamp 5's "Use
 	 * bitmap font for main title display" (Options); off, always the TrueType font. */
 	bitmapTitle: false,
+	/** The title as Winamp's: the track's place in the playlist before it and its length after,
+	 * "2. Artist - Title (2:54)" (Options); off, "Artist - Title". */
+	titleNumbers: true,
+	/** Paused, the clocks blink, as Winamp's do (Options); off, they stay lit. */
+	pauseBlink: true,
+	/** Winamp's Stop: nothing loaded, the clocks, kbps/kHz, mono/stereo and the seek thumb blank,
+	 * the stop mark lit, until playback moves again (skinApi.js `followStopped`). */
+	stopped: false,
+	stoppedSeenPaused: false,
 	/** Open MilkDrop whenever the Winamp window opens (the analyzer's right-click menu). */
 	milkdropOnStart: false,
 	/** The MilkDrop window (Butterchurn) is open. */

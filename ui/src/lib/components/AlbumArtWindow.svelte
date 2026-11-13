@@ -13,7 +13,7 @@
 	import { setActivePart } from '../skin/focus.js';
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { coverFor } from '../skin/art.js';
-	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { ART_CAPTION_EVENT, loadSkin } from '../skin/skinApi.js';
 	import { loadPrefs, pref } from '../skin/prefs.js';
 	import { showArtMenu } from '../skin/menu.js';
@@ -145,16 +145,10 @@
 
 		const stopLoop = startRenderLoop(() => {
 			if (sprites.size === 0) return;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
 			const w = window.innerWidth;
 			const h = window.innerHeight;
-			if (canvas.width !== w || canvas.height !== h) {
-				canvas.width = w;
-				canvas.height = h;
-				canvas.style.width = `${w}px`;
-				canvas.style.height = `${h}px`;
-			}
+			const ctx = prepareCanvas(canvas, w, h);
+			if (!ctx) return;
 			ctx.clearRect(0, 0, w, h);
 			const caption = uiState.art.caption ? { text: playback.now?.album ?? '', pledit } : null;
 			drawAlbumArt(ctx, sprites, coverFor(playback.now?.thumbnail), { x: 0, y: 0, w, h }, closePressed, caption);

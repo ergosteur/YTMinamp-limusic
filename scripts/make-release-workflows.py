@@ -55,6 +55,8 @@ def until_step(text: str, name: str) -> str:
 
 VERSION_CHECK = """      - name: Check the tag matches the app version
         shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
         run: |
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -66,7 +68,7 @@ VERSION_CHECK = """      - name: Check the tag matches the app version
           IFS=. read -r MA MI PA <<< "$VERSION"
           MSI="$(jq -r .bundle.windows.wix.version src-tauri/tauri.conf.json)"
           problem=""
-          [ "${{ steps.rel.outputs.tag }}" = "v$VERSION-ytminamp.$N" ] || problem="the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.$N"
+          [ "$TAG" = "v$VERSION-ytminamp.$N" ] || problem="the tag $TAG isn't v$VERSION-ytminamp.$N"
           [ "$MSI" = "$MA.$MI.$((PA * 1000 + N))" ] || problem="MSI version $MSI doesn't match build $N: run scripts/set-ytminamp-release.py $N"
           grep -q "YTMINAMP_RELEASE = $N;" ui/src/lib/skin/release.js || problem="ui/src/lib/skin/release.js isn't build $N: run scripts/set-ytminamp-release.py $N"
           if [ -n "$problem" ]; then
@@ -89,6 +91,7 @@ def upload_step(files: str) -> str:
         shell: bash
         env:
           GH_TOKEN: ${{{{ github.token }}}}
+          TAG: ${{{{ steps.rel.outputs.tag }}}}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -102,7 +105,7 @@ def upload_step(files: str) -> str:
             name="$(basename "$f")"
             cp "$f" "$OUT/${{name/_${{VERSION}}_/_${{YTMINAMP_TAG#v}}_}}"
           done
-          gh release upload "${{{{ steps.rel.outputs.tag }}}}" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
           ls "$OUT"
 """
 
@@ -123,6 +126,13 @@ def common(text: str, platform: str, source: str) -> str:
         flags=re.S,
     )
     text = re.sub(r"group: (\w+)-release-", r"group: ytminamp-\1-release-", text)
+    # The dispatch input reaches the shell through the environment, not pasted into the script,
+    # so a tag can't be shell syntax.
+    text = sub(
+        text,
+        '        run: |\n          TAG="${{ inputs.tag }}"\n',
+        '        env:\n          INPUT_TAG: ${{ inputs.tag }}\n        run: |\n          TAG="$INPUT_TAG"\n',
+    )
     # The signing key: drop it from the build step's env, and the check that insists on it.
     text = re.sub(
         r"          # Scoped to this step only[^\n]*\n          TAURI_SIGNING_PRIVATE_KEY: [^\n]*\n          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: [^\n]*\n",

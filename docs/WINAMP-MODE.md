@@ -21,8 +21,7 @@ Limusic's, through `tray::show_main`, the same path the mini player uses.
 |---|---|
 | `.wsz` parser (zip, BMP incl. RLE8/RLE4, `region.txt`, `viscolor.txt`, `pledit.txt`) | `crates/skin` |
 | Check a folder of skins: `cargo run -p skin --example check_skins -- <dir>` | `crates/skin/examples` |
-| Window open/close/resize, skins folder, remembered skin | `src-tauri/src/winamp.rs` |
-| Tauri commands (`open_winamp`, `close_winamp`, `resize_winamp`, `*_wsz_skin(s)`, `open_skins_dir`) | `src-tauri/src/commands.rs` |
+| Window open/close/resize, skins folder, remembered skin, and their Tauri commands (`open_winamp`, `close_winamp`, `resize_winamp`, `*_wsz_skin(s)`, `open_skins_dir`) | `src-tauri/src/winamp.rs` |
 | Svelte host component (window label `winamp`) | `ui/src/lib/components/WinampSkin.svelte` |
 | Canvas renderer, sprite tables, hit-testing | `ui/src/lib/skin/` |
 | Right-click / options-button menu, laid out like WACUP's | `ui/src/lib/skin/menu.js` |
@@ -49,8 +48,10 @@ Kept small so upstream merges stay easy. After a merge, run `ui/`'s self-checks 
 merge conflicts, these are the places:
 
 - `src-tauri/src/lib.rs` — `mod winamp`, command registration, the `only_ui` window allowlist, the
-  close-request handler (its `winamp::LABEL` arm, `close_hides` made `pub(crate)`), and the window-state plugin's filter,
-  which tracks the Winamp windows too (restored by `winamp::restore_place`, not by the plugin).
+  close-request handler (its `winamp::LABEL` arm, `close_hides` made `pub(crate)`), the window-state plugin's filter,
+  which tracks the Winamp windows too (restored by `winamp::restore_place`, not by the plugin), and the
+  single-instance callback (a `music.youtube.com` link stays in Winamp mode instead of tearing it
+  down for Limusic's Open-link dialog, when Winamp is already on screen).
 - `src-tauri/src/tray.rs` — `show_main` brings Winamp mode back from the tray, or else also closes
   the Winamp window.
 - `crates/player/src/lib.rs` — `Player::audio_info` (kbps/kHz/channels for the display),
@@ -61,7 +62,9 @@ merge conflicts, these are the places:
   (`src-tauri/ytminamp-build.rs`, the skins compiled in).
 - `src-tauri/capabilities/default.json` — every Winamp window's label in the window list
   (`winamp`, `winamp-<panel>`; without it a window can't listen to events, drag or resize, and
-  nothing updates).
+  nothing updates). `updater:default` is removed: YTMinamp only reads its GitHub releases
+  (`brand.rs`), so the plugin's download-and-install, which trusts Limusic's signing key, is
+  never reachable from a webview.
 - `src-tauri/tauri.conf.json` — product name/identifier, and **updater endpoints emptied** so
   this fork can never self-update to vanilla Limusic; `tauri.macos.conf.json` repeats the title.
 - `ui/src/lib/updater.svelte.ts` — `look()` is ours (`skin/updates.js`: YTMinamp's own GitHub
@@ -70,8 +73,9 @@ merge conflicts, these are the places:
   `skin/brand.js`; the Winamp-mode button with the app icon.
 - `ui/src/routes/+layout.svelte` — the `isWinamp…` branches; the Media Library's renders Limusic's
   `Sidebar` and pages inside `MediaLibraryWindow.svelte`, without `initTheme()`.
-- `src-tauri/src/commands.rs` — our commands, including `winamp_queue_intro`, which only calls
-  `AppState`'s public `queue_snapshot`, `add_to_queue` and `restore_queue`.
+- `src-tauri/src/commands.rs` — `show_main`'s "Always start in Winamp mode" branch. Every other
+  Winamp command that once lived here (added by us, so a merge conflict there was never real risk)
+  has moved into `winamp.rs`, which isn't an upstream file and so isn't in this list at all.
 - `ui/src/lib/api.ts`, `ui/src/lib/player.svelte.ts` — command wrappers.
 
 ## Spectrum analyzer
@@ -111,13 +115,25 @@ right-click menu (**Analyser levels**, remembered as `vizLevels`):
 Both measure the music before the volume control, as Winamp's analyzer does. mpv filters
 ahead of its output buffer, so the levels are held back 0.2 s to line up with what plays.
 Falloff and peak hold run per frame in `ui/src/lib/skin/render/visualizer.js`, coloured from the
-skin's `viscolor.txt` (stock Winamp palette for missing slots). Click the analyzer to turn it
-off/on.
+skin's `viscolor.txt` (stock Winamp palette for missing slots). Paused, the bars and peaks hold
+where they were, as Winamp's do, instead of falling. Click the analyzer to turn it off/on.
 
 If mpv refuses the filter (a libmpv whose ffmpeg lacks one of them), no levels arrive and the
 analyzer plays test patterns while music plays rather than sitting empty: sweeps at different
 speeds, a travelling wave, random bars, a staircase, a pulse, a new one every six seconds
-(`ui/src/lib/skin/testPattern.js`).
+(`ui/src/lib/skin/testPattern.js`). The analyzer's right-click menu, Analyser levels ▸ Test
+patterns, shows any one of them instead of the live levels, even paused or stopped, until Off
+(live levels) is picked again (for that session only).
+
+On macOS the analyzer also shows test patterns while any menu is open (the main menu or a
+right-click one), and goes back to live levels once the menu closes. This is expected. Off Linux,
+menus are Tauri's (muda), whose popup runs modally on the main thread
+(`popUpMenuPositioningItem`), so Tauri delivers no events while a menu is up. Windows has not been
+checked: its modal menu loop still dispatches posted messages, so events may keep coming there. The `winamp-viz` frames pile up undelivered, the page's columns go
+stale after 0.5 s, and it treats that as "no feed", the same as a libmpv without the filters. The
+page itself keeps rendering, which is why the patterns animate. Linux is unaffected: its menus are
+the non-modal GTK popup (`winamp.rs`). Holding the last frame instead would be a small change in
+`testPattern.js`, but nothing needs it.
 
 Limits: 19 bands, not a full FFT (exactly what the classic analyzer shows, but no oscilloscope
 mode, which needs the waveform).
@@ -211,8 +227,10 @@ Ctrl+Shift+click adds that range. Delete removes every selected track still to c
 menus act on every selected result (played first then the rest next, or queued in order).
 
 Both panels show the playing time in the small box beside their mini transport buttons, in the
-skin's text font (Webamp's MiniTime: elapsed, or remaining with a minus). Unlike Winamp's it
-doesn't blink while paused, since the main window's clock here doesn't either. Click it to
+skin's text font (Webamp's MiniTime: elapsed, or remaining with a minus). Paused, it blinks
+with the main window's clock, as Winamp's do: 1.2 s shown, 1.2 s hidden, WACUP's timing
+(`PAUSE_BLINK_MS` in `render/numbers.js`; Options ▸ **Blink time display while paused**, on by
+default, remembered as `pauseBlink`). Click it to
 switch, as with the main window's clock.
 
 ## Context menus
@@ -230,7 +248,7 @@ Modelled on real Winamp's (WACUP's) menus, in their order and wording, keeping w
 | The album art | View file info... (Alt+3); Show full-size artwork (the biggest YouTube serves, in the browser); Show album name (a strip under the picture, any script, remembered as `artCaption`, in every window); Height ▸ (beside the player: Main window, or Main window and equaliser); Placement ▸; Copy link, Open in YouTube Music |
 | The lyrics | Romanization, Translations (Limusic's own switches); Bigger / Smaller / Normal size |
 | Any window's frame | The main menu, from every Winamp window (a floating one asks the Winamp window, which shows it over the window clicked: `requestMainMenu`); inside, the window's own menu |
-| Anywhere else | The main menu: About; Play ▸ (YouTube Music / Spotify URL..., Search..., Playlist from Library ▸); Listen Together... (ticked in a room; Limusic's dialog, over the Media Library); View file info... (the playing track); Import from Spotify... (Limusic's importer, over the Media Library); Media Library (Alt+L), Limusic window (Alt+M), the panels; Options ▸ (Preferences... first, Ctrl+P: Limusic's settings, in its window; Always on top, Double size, Time remaining, Use bitmap font for main title display; Always start in Winamp mode, ✕ closes to tray), Playback ▸, Visualisation ▸, Skins ▸ (Skin browser... first, Alt+S), Window Settings ▸; Close to tray (Ctrl+W), Switch to Limusic mode, Exit (Ctrl+Q) |
+| Anywhere else | The main menu: About; Play ▸ (YouTube Music / Spotify URL..., Search..., Playlist from Library ▸); Listen Together... (ticked in a room; Limusic's dialog, over the Media Library); View file info... (the playing track); Import from Spotify... (Limusic's importer, over the Media Library); Media Library (Alt+L), Limusic window (Alt+M), the panels; Options ▸ (Preferences... first, Ctrl+P: Limusic's settings, in its window; Always on top, Double size, Time remaining, Blink time display while paused, Use bitmap font for main title display, Show track number and length in title; Always start in Winamp mode, ✕ closes to tray), Playback ▸, Visualisation ▸, Skins ▸ (Skin browser... first, Alt+S), Window Settings ▸; Close to tray (Ctrl+W), Switch to Limusic mode, Exit (Ctrl+Q) |
 
 Hovering a song title (a playlist or search row, or the main window's title) shows it in full:
 title, then artist, album and length, a line each. A playlist or search row too long for its line
@@ -281,12 +299,20 @@ Ctrl+wheel on Windows (`pixels.js` `onPinch`); lyrics take them too. The track r
 through localStorage (`showFileInfo` in `skinApi.js`), which every window shares, so an open File
 info window follows the next one shown.
 
+**Stop** (V, the Stop button) is Winamp's, not a pause: `winamp::winamp_stop` unloads the track
+(mpv's `stop`, so mpv goes idle) and the queue keeps its place. Every Winamp window hears it
+(`winamp-stopped`) and shows it stopped until playback moves again: the clocks, kbps/kHz,
+mono/stereo and the seek thumb blank, the stop mark in `playpaus.bmp`, the analyzer falling.
+Play starts the track again from the top (Limusic's play/pause loads the current track when mpv
+has nothing loaded, as after a launch); Pause does nothing while stopped. Limusic's own window and
+the system's media controls show it as paused at 0:00, having no stopped state of their own.
+
 **Stop after current** (Playback ▸, the Stop button's right-click menu, Ctrl+click on Stop, or
 Ctrl+V) pauses at the end of the playing track instead of going on: mpv's `keep-open=always`
 (`winamp::stop_after_current`), so nothing of the next track is heard; crossfade is suspended
 while it's set. It's spent once it fires ("Stopped after current" in the title), and Play then goes
 on to the next track. **Stop w/ fadeout** (Shift+V) brings the volume down over a second and a
-half, stops, and puts the volume back.
+half, then Stops, and puts the volume back.
 
 ## Clutterbar, double size, always on top
 
@@ -528,7 +554,9 @@ rm -rf src-tauri/icons/android src-tauri/icons/ios
 
 ## Title, kbps, kHz
 
-The title area shows "Artist - Title" in the playlist editor's font (`pledit.txt`) instead of
+The title area shows "2. Artist - Title (2:54)", as Winamp's does: the track's place in the
+playlist and its length (Options ▸ **Show track number and length in title**, on by default,
+remembered as `titleNumbers`; off, "Artist - Title" alone), in the playlist editor's font (`pledit.txt`) instead of
 `text.bmp`, so it can show any script (`text.bmp` has only ASCII), in `text.bmp`'s own colour (the
 commonest colour of its letters that isn't the background, as Winamp's title takes it), so a skin
 with a light playlist over a dark display still shows its title; `pledit.txt`'s Normal is the
@@ -536,7 +564,9 @@ fallback. Options ▸ **Use bitmap font for main title display** (Winamp 5's opt
 default, remembered as `bitmapTitle`) draws it in `text.bmp` itself whenever every character is in
 `text.bmp`, scrolling a cell at a time, and in the TrueType font otherwise (Korean, Japanese,
 accents `text.bmp` lacks). It scrolls when it's too long.
-Its 154×6 box is filled with `text.bmp`'s blank cell first, as Winamp's bitmap title fills all its
+Both sit where Winamp and WACUP draw them: the text row at y 27 (Webamp's `#marquee`, top 24,
+plus its 3px padding), the TrueType line's baseline under that row. Its 154×6 row is filled with
+`text.bmp`'s blank cell first, as Winamp's bitmap title fills all its
 cells, so credits or a logo a skin paints there in `main.bmp` don't show through (the kbps and kHz
 digits are `text.bmp` cells already).
 kbps, kHz and mono/stereo come from mpv's decoded stream (`audio-bitrate`,
@@ -587,6 +617,21 @@ window, which owns the skin (`winamp-skin-select`); **Random**, **Load skin…**
 folder** as in the menu. Thumbnails are drawn as their rows scroll into view, two at a time, and
 kept for the window's life; the last few previews' sprites are kept too.
 
+### The one skin extension: see-through EQ sliders
+
+Winamp draws each EQ slider's background (eqmain.bmp's 28 frames from x 13, y 164) and thumb
+(x 0, y 164 and 176) opaque, and all eleven sliders share them, so a picture in the EQ's background
+is always cut into by eleven boxes. A skin may name a colour in pledit.txt's `[Text]` section,
+`YTMinampTransparent=#rrggbb`; YTMinamp then draws that exact colour see-through in those slider
+frames and thumbs only (eqmain.bmp x 0-222, y 164-292; `spritesheet.js`
+`keyOutEqSliders`, applied in `skinApi.js` `skinSprites` by the windows that draw the EQ), and the
+eqmain background shows between the slider marks. The same colour anywhere else in the skin is
+drawn as usual. Real Winamp and WACUP ignore the unknown key and draw the colour as it is, so a
+skin should key its backdrop colour: there it looks like flat columns of that colour.
+Options ▸ **Allow skin transparency (YTMinamp)** (on; `skinTransparency` in winamp.json) turns it
+off for skins drawn exactly as Winamp draws them; the Winamp window reloads the skin and the
+others follow (`winamp-skin-reload`, then `winamp-skin-changed`).
+
 ## Window shape
 
 `region.txt` is a list of polygons Winamp ORs together (rounded corners are typically several
@@ -600,6 +645,15 @@ WebKitGTK scales page content by the desktop's font DPI / text-scaling factor, s
 in a 275 px window can come out ~4.5% (or much more) too big: the skin overflows the window and
 every click lands in the wrong place. `WinampSkin.svelte` measures the real CSS-px-to-screen-px
 ratio on open and cancels it with the webview zoom. Don't remove that.
+
+Double size zooms the page on top of that (`pixels.js` `setScale`). The zoom alone would leave
+WebKitGTK to upscale each canvas itself, smoothed (`image-rendering` doesn't apply: no canvas is
+scaled by CSS), so every skin canvas is sized through `pixels.js` `prepareCanvas`: its backing
+store at the zoom's device pixels, a context scaled to draw in CSS px, smoothing off. Sprites come
+out doubled nearest-neighbour, as Winamp's, and TrueType text is drawn at full resolution. Clicks
+map through the canvas's CSS size (`input.js` `canvasPoint`), not its buffer; the album cover is
+scaled at device resolution so it stays a photo. Windows that draw on demand redraw on a zoom
+change (`onScale`).
 
 ## Drawing and CPU
 

@@ -11,7 +11,7 @@
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
-	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { followDoubleSize, onScale, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { flashMarquee, loadSkin, queueLlama } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -51,14 +51,11 @@
 	const open = (/** @type {string} */ url) => openExternal(url).catch((e) => console.error('open link failed', e));
 
 	function draw() {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
+		if (!canvas || sprites.size === 0) return;
 		// As big as the window, which opens at ABOUT_SIZE and resizes from its edges.
 		const [w, h] = [window.innerWidth, window.innerHeight];
-		canvas.width = w;
-		canvas.height = h;
-		canvas.style.width = `${w}px`;
-		canvas.style.height = `${h}px`;
+		const ctx = prepareCanvas(canvas, w, h);
+		if (!ctx) return;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, w, h);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'about', isLit('about'));
@@ -75,6 +72,7 @@
 		window.addEventListener('blur', draw);
 		window.addEventListener('resize', draw);
 		// The DPI fix, then double size on top, following the Winamp window's.
+		const stopScale = onScale(draw);
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `about zoom pin failed: ${e}`)),
 			'about'
@@ -118,6 +116,7 @@
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
+			stopScale();
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('resize', draw);
 			window.removeEventListener('focus', draw);

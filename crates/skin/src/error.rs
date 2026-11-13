@@ -4,6 +4,8 @@ pub enum Error {
     Zip(#[from] zip::result::ZipError),
     #[error("io error reading skin archive: {0}")]
     Io(#[from] std::io::Error),
+    #[error("not a usable skin archive: entries share their data")]
+    OverlappingEntries,
     #[error("main.bmp is missing — every classic skin needs a main window background")]
     MissingMainBmp,
     #[error("{name}: not a BMP file (missing 'BM' magic)")]

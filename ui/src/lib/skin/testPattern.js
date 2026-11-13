@@ -9,8 +9,12 @@ const COLUMNS = 75;
 /** Values in the analyzer's units, the same as viz.rs's (15 fills the box). */
 const TOP = 16;
 const PATTERN_MS = 6000;
-/** Real columns older than this mean there's no live feed. */
+/** Real columns older than this mean there's no live feed. Also true while a macOS menu is open:
+ * Tauri's popup is modal and holds back events (docs/WINAMP-MODE.md, Spectrum analyzer). */
 const STALE_MS = 500;
+
+/** The patterns' names, for the analyzer menu's Test patterns submenu (forcing one, `uiState.testPattern`). */
+export const PATTERN_NAMES = ['Slow sweep', 'Ping-pong', 'Travelling wave', 'Random bars', 'Staircase', 'Crossing sweeps', 'Pulse'];
 
 const out = new Float32Array(COLUMNS);
 const noise = new Float32Array(COLUMNS);
@@ -21,7 +25,8 @@ function bump(at, width) {
 	for (let x = 0; x < COLUMNS; x++) out[x] = Math.max(out[x], TOP * Math.exp(-(((x - at) / width) ** 2)));
 }
 
-/** Each pattern fills `out` for time `t` (seconds into it). @type {((t: number) => void)[]} */
+/** Each pattern fills `out` for time `t` (seconds into it), in the order of `PATTERN_NAMES`.
+ * @type {((t: number) => void)[]} */
 const PATTERNS = [
 	// Slow sweep, left to right.
 	(t) => bump(((t / 2) % 1) * (COLUMNS + 20) - 10, 6),
@@ -61,12 +66,18 @@ const PATTERNS = [
 ];
 
 /**
- * The columns the analyzer should draw now: the live feed's, a test pattern while music plays
- * without one, or null (silence).
+ * The columns the analyzer should draw now: the test pattern picked in the menu, else the live
+ * feed's, a test pattern while music plays without one, or null (silence).
  * @param {number} nowMs a `performance.now()` time
  * @returns {ArrayLike<number> | null}
  */
 export function analyzerColumns(nowMs) {
+	const forced = uiState.testPattern;
+	if (forced !== null) {
+		out.fill(0);
+		PATTERNS[forced]?.((nowMs % (PATTERN_MS * 10)) / 1000);
+		return out;
+	}
 	if (uiState.vizColumns && nowMs - uiState.vizAt < STALE_MS) return uiState.vizColumns;
 	if (!playback.now || playback.paused) return null;
 	const n = Math.floor(nowMs / PATTERN_MS);

@@ -10,7 +10,7 @@
 	import LibraryPages from './LibraryPages.svelte';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { artFrame, drawFrame, frameInset, onCloseButton } from '../skin/render/albumArt.js';
-	import { pinOneToOnePixels } from '../skin/pixels.js';
+	import { pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { ui } from '$lib/player.svelte';
 	import { closeToTrayNow, knowSettings, loadSkin, tickerToast } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
@@ -32,14 +32,12 @@
 	const close = () => closeLibrary().catch((e) => console.error('close failed', e));
 
 	function draw() {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
+		if (!canvas || sprites.size === 0) return;
 		const w = window.innerWidth;
 		const h = window.innerHeight;
-		canvas.width = w;
-		canvas.height = h;
-		canvas.style.width = `${w}px`;
-		canvas.style.height = `${h}px`;
+		const ctx = prepareCanvas(canvas, w, h);
+		if (!ctx) return;
+		ctx.clearRect(0, 0, w, h);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'media library', isLit('library'));
 	}
 

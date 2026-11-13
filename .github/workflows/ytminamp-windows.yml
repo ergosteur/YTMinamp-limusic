@@ -75,8 +75,10 @@ jobs:
       - name: Resolve the tag
         id: rel
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="$INPUT_TAG"
           [ -n "$TAG" ] || { echo "::error::no tag to build for"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -100,6 +102,8 @@ jobs:
       # build cannot escape.
       - name: Check the tag matches the app version
         shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
         run: |
           VERSION="$(jq -r .version src-tauri/tauri.conf.json)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -111,7 +115,7 @@ jobs:
           IFS=. read -r MA MI PA <<< "$VERSION"
           MSI="$(jq -r .bundle.windows.wix.version src-tauri/tauri.conf.json)"
           problem=""
-          [ "${{ steps.rel.outputs.tag }}" = "v$VERSION-ytminamp.$N" ] || problem="the tag ${{ steps.rel.outputs.tag }} isn't v$VERSION-ytminamp.$N"
+          [ "$TAG" = "v$VERSION-ytminamp.$N" ] || problem="the tag $TAG isn't v$VERSION-ytminamp.$N"
           [ "$MSI" = "$MA.$MI.$((PA * 1000 + N))" ] || problem="MSI version $MSI doesn't match build $N: run scripts/set-ytminamp-release.py $N"
           grep -q "YTMINAMP_RELEASE = $N;" ui/src/lib/skin/release.js || problem="ui/src/lib/skin/release.js isn't build $N: run scripts/set-ytminamp-release.py $N"
           if [ -n "$problem" ]; then
@@ -338,6 +342,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -351,5 +356,5 @@ jobs:
             name="$(basename "$f")"
             cp "$f" "$OUT/${name/_${VERSION}_/_${YTMINAMP_TAG#v}_}"
           done
-          gh release upload "${{ steps.rel.outputs.tag }}" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" "$OUT"/* --repo "$GITHUB_REPOSITORY" --clobber
           ls "$OUT"

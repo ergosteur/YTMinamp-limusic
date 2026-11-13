@@ -10,7 +10,6 @@
 	import { playback, ui } from '$lib/player.svelte';
 	import { resizeWinampPanel } from '$lib/api';
 	import { logUi } from '$lib/errlog';
-	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import {
 		SEARCH_INPUT_H,
 		drawPlaylist,
@@ -22,18 +21,23 @@
 	import { startRenderLoop } from '../skin/render/loop.js';
 	import { attachInput } from '../skin/input.js';
 	import { setActivePart } from '../skin/focus.js';
-	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import {
 		LYRICS_ZOOM_EVENT,
 		SEARCH_INPUT_ID,
 		fileInfoForSelection,
 		flashSearch,
 		followQueue,
+		followStopped,
+		markStopped,
+		STOPPED_EVENT,
 		loadAccount,
 		loadSkin,
+		movePlaylistSelection,
 		playIndex,
 		searchKeydown,
 		searchWelcome,
+		skinSprites,
 		tickerToast
 	} from '../skin/skinApi.js';
 	import { requestMainMenu, showPlaylistMenu, showLyricsMenu, showPresetsMenu, showQueueRowMenu, showSearchMenu, showTitleMenu, showVisMenu, showArtMenu, showSearchKindMenu, showResultMenu } from '../skin/menu.js';
@@ -96,8 +100,12 @@
 		const detachKeys = attachKeys((action) => {
 			// File info for this window's own selection.
 			if (action === 'fileInfo') return (fileInfoForSelection(), true);
+			if (kind !== 'playlist') return false;
+			// Up/down move this playlist's own selection, docked or not.
+			if (action === 'plUp') return (movePlaylistSelection(-1, size()), true);
+			if (action === 'plDown') return (movePlaylistSelection(1, size()), true);
 			// Delete/Ctrl+Delete/Enter work on this playlist's own selection.
-			if (kind !== 'playlist' || (action !== 'remove' && action !== 'crop' && action !== 'playSelected')) return false;
+			if (action !== 'remove' && action !== 'crop' && action !== 'playSelected') return false;
 			if (action === 'remove') removeSelected().catch(() => {});
 			else if (action === 'crop') cropToSelected().catch(() => {});
 			else if (uiState.pl.selected !== null) playIndex(uiState.pl.selected).catch(() => {});
@@ -111,7 +119,7 @@
 			const mine = ++skinLoads;
 			return loadSkin()
 				.then(async (payload) => {
-					const decoded = await decodeAllSprites(payload.sprites);
+					const decoded = await skinSprites(payload);
 					if (mine !== skinLoads) return;
 					sprites = decoded;
 					pledit = payload.pledit;
@@ -127,6 +135,8 @@
 		const unlistenFocus = listen('winamp-search-focus', () => flashSearch());
 		// The lyrics' size, changed from the keyboard in any Winamp window.
 		const unlistenZoom = listen(LYRICS_ZOOM_EVENT, (e) => (uiState.lyrics.zoom = /** @type {number} */ (e.payload)));
+		// The panels' mini time shows a Stop too.
+		const unlistenStopped = listen(STOPPED_EVENT, markStopped);
 
 		attachInput(canvas, {
 			hitTest: (x, y) => {
@@ -210,16 +220,11 @@
 		const stopLoop = startRenderLoop(() => {
 			if (sprites.size === 0) return;
 			if (kind === 'search' && kindLabel(uiState.search.kind) !== kindText) kindText = kindLabel(uiState.search.kind);
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
 			const { w, h } = size();
-			if (canvas.width !== w || canvas.height !== h) {
-				canvas.width = w;
-				canvas.height = h;
-				canvas.style.width = `${w}px`;
-				canvas.style.height = `${h}px`;
-			}
+			const ctx = prepareCanvas(canvas, w, h);
+			if (!ctx) return;
 			ctx.clearRect(0, 0, w, h);
+			followStopped();
 			if (kind === 'playlist') {
 				followQueue(listRows('playlist', { w, h }).rows);
 				drawPlaylist(ctx, sprites, pledit, playback.queue, uiState.pl, 0, { w, h });
@@ -241,6 +246,7 @@
 			unlistenSkin.then((f) => f());
 			unlistenFocus.then((f) => f());
 			unlistenZoom.then((f) => f());
+			unlistenStopped.then((f) => f());
 			detachKeys();
 			window.removeEventListener('mousedown', onDown, { capture: true });
 			window.removeEventListener('mousemove', onMove);

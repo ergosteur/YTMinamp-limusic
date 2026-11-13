@@ -11,7 +11,7 @@
 	import { checkForUpdatesInteractive, openDownloadPage, updateState } from '$lib/updater.svelte';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { artFrame, drawFrame, frameInset, onCloseButton } from '../skin/render/albumArt.js';
-	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { followDoubleSize, onScale, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { UPDATE_SIZE, loadSkin } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -35,12 +35,9 @@
 	const newer = $derived(!!updateState.available && !updateState.available.rollback);
 
 	function draw() {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
-		canvas.width = WIDTH;
-		canvas.height = HEIGHT;
-		canvas.style.width = `${WIDTH}px`;
-		canvas.style.height = `${HEIGHT}px`;
+		if (!canvas || sprites.size === 0) return;
+		const ctx = prepareCanvas(canvas, WIDTH, HEIGHT);
+		if (!ctx) return;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, WIDTH, HEIGHT);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w: WIDTH, h: HEIGHT }, closePressed, 'update', isLit('update'));
@@ -59,6 +56,7 @@
 		checkForUpdatesInteractive().then((r) => (message = r.message));
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
+		const stopScale = onScale(draw);
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `update zoom pin failed: ${e}`)),
 			'update'
@@ -98,6 +96,7 @@
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
+			stopScale();
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);

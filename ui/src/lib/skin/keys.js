@@ -8,8 +8,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { keyOf, typing } from '$lib/shortcuts';
 import { openLimusicSettings, toggleLimusic } from './navigate.js';
 import { toggleLibrary } from './library.js';
+import { activePart } from './focus.js';
 import {
 	cycleRepeat,
+	movePlaylistSelection,
 	nextTrack,
 	nudgeVolume,
 	openUrlDialog,
@@ -39,7 +41,7 @@ import { openSkinBrowser } from './skinBrowser.js';
 /** @typedef {'previous' | 'play' | 'pause' | 'stop' | 'next' | 'back' | 'forward' | 'louder' | 'quieter'
  *   | 'shuffle' | 'repeat' | 'search' | 'url' | 'remove' | 'playSelected' | 'onTop' | 'double' | 'time'
  *   | 'playlist' | 'eq' | 'art' | 'lyrics' | 'lyricsBigger' | 'lyricsSmaller' | 'lyricsReset' | 'milkdrop' | 'fileInfo' | 'crop'
- *   | 'stopAfter' | 'stopFade' | 'library' | 'limusic' | 'searchPanel' | 'prefs' | 'tray' | 'skins'} KeyAction */
+ *   | 'stopAfter' | 'stopFade' | 'library' | 'limusic' | 'searchPanel' | 'prefs' | 'tray' | 'skins' | 'plUp' | 'plDown'} KeyAction */
 
 /**
  * The key, as Limusic's `keyOf` reads it, except where a modifier or the layout turns one of our
@@ -95,6 +97,12 @@ function actionFor(e) {
 	}
 	if (e.shiftKey && !ctrl && !e.altKey && key === 'v') return 'stopFade';
 	if (ctrl || e.altKey || e.shiftKey) return null;
+	// The playlist's own up/down, when it's the pane last clicked: the search box's input already
+	// escapes the arrows below by catching them itself first (shortcuts.ts's `typing`), but the
+	// playlist has no input box to do that with.
+	if ((key === 'ArrowUp' || key === 'ArrowDown') && activePart() === 'playlist') {
+		return key === 'ArrowUp' ? 'plUp' : 'plDown';
+	}
 	return (
 		/** @type {Record<string, KeyAction>} */ ({
 			z: 'previous',
@@ -159,6 +167,12 @@ export function runKey(action) {
 			return;
 		case 'playSelected':
 			if (plDocked() && uiState.pl.selected !== null) playIndex(uiState.pl.selected).catch(log('play'));
+			return;
+		case 'plUp':
+			if (plDocked()) movePlaylistSelection(-1);
+			return;
+		case 'plDown':
+			if (plDocked()) movePlaylistSelection(1);
 			return;
 		case 'stopAfter':
 			return toggleStopAfterCurrent();

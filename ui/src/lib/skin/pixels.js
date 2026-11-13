@@ -5,6 +5,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { resizeWinampPanel } from '$lib/api';
 import { logUi } from '$lib/errlog';
+import { wake } from './render/loop.js';
 
 /** The zoom that makes one CSS px one window px (see `pinOneToOnePixels`). */
 let base = 1;
@@ -22,6 +23,41 @@ export const zoomFactor = () => base * scale;
 export async function setScale(factor) {
 	scale = factor;
 	await getCurrentWebview().setZoom(base * scale);
+	// The backing stores follow the zoom (`prepareCanvas`): redraw now.
+	wake();
+	window.dispatchEvent(new Event(SCALE_EVENT));
+}
+
+const SCALE_EVENT = 'ytminamp-scale';
+
+/** Call `redraw` when this window's zoom changes: for windows that draw on demand rather than in
+ *  a render loop. Returns the unlisten. @param {() => void} redraw */
+export function onScale(redraw) {
+	window.addEventListener(SCALE_EVENT, redraw);
+	return () => window.removeEventListener(SCALE_EVENT, redraw);
+}
+
+/**
+ * Size a skin canvas to `width`x`height` CSS px with a backing store at the page zoom's device
+ * pixels, and return its context scaled to draw in CSS px. The page zoom alone would upscale a
+ * 1:1 canvas itself, smoothing it (WebKitGTK ignores `image-rendering` for that); drawn at device
+ * resolution with smoothing off, double size comes out as blocky pixels, like Winamp's.
+ * @param {HTMLCanvasElement} canvas @param {number} width @param {number} height
+ */
+export function prepareCanvas(canvas, width, height) {
+	const k = zoomFactor();
+	const w = Math.round(width * k);
+	const h = Math.round(height * k);
+	if (canvas.width !== w) canvas.width = w;
+	if (canvas.height !== h) canvas.height = h;
+	// The CSS box set too: it must not follow the buffer (Tailwind's preflight caps canvas width).
+	canvas.style.width = `${width}px`;
+	canvas.style.height = `${height}px`;
+	const ctx = canvas.getContext('2d');
+	if (!ctx) return null;
+	ctx.setTransform(k, 0, 0, k, 0, 0);
+	ctx.imageSmoothingEnabled = false;
+	return ctx;
 }
 
 /** Where the Winamp window says whether double size is on, for its other windows to read at once

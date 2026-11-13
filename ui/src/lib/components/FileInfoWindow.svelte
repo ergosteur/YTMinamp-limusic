@@ -16,7 +16,7 @@
 	import { thumb } from '$lib/thumb';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { artFrame, onCloseButton, drawFrame, frameInset } from '../skin/render/albumArt.js';
-	import { doubleFactor, followDoubleSize, onPinch, pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, onPinch, onScale, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { showFileInfoMenu } from '../skin/menu.js';
 	import { FILE_INFO_KEY, FILE_INFO_SIZE, loadSkin } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
@@ -162,13 +162,10 @@
 	}
 
 	function draw() {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
+		if (!canvas || sprites.size === 0) return;
 		const { w, h } = size;
-		canvas.width = w;
-		canvas.height = h;
-		canvas.style.width = `${w}px`;
-		canvas.style.height = `${h}px`;
+		const ctx = prepareCanvas(canvas, w, h);
+		if (!ctx) return;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, w, h);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'file info', isLit('fileinfo'));
@@ -196,6 +193,7 @@
 		window.addEventListener('blur', draw);
 		window.addEventListener('resize', onResize);
 		// The DPI fix, then double size on top, following the Winamp window's.
+		const stopScale = onScale(onResize);
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `file info zoom pin failed: ${e}`)),
 			'fileinfo'
@@ -262,6 +260,7 @@
 		window.addEventListener('keydown', onKey);
 		return () => {
 			unlistenDouble.then((f) => f());
+			stopScale();
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('storage', onStorage);
 			window.removeEventListener('resize', onResize);

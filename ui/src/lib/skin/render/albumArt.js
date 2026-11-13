@@ -207,7 +207,11 @@ export function drawAlbumArt(ctx, sprites, image, at, closePressed, caption = nu
 	ctx.fillStyle = '#000000';
 	ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
 	if (image && image.naturalWidth > 0 && inner.w > 0 && inner.h > 0) {
-		ctx.drawImage(scaledCover(image, inner.w, inner.h), inner.x, inner.y);
+		// Scaled at the canvas's device resolution (double size draws through a 2x transform), so a
+		// photo stays a photo instead of being pixel-doubled like the skin's bitmaps.
+		const k = ctx.getTransform().a;
+		const cover = scaledCover(image, Math.round(inner.w * k), Math.round(inner.h * k));
+		ctx.drawImage(cover, inner.x, inner.y, inner.w, inner.h);
 	}
 	if (caption) {
 		// In the playlist's font and colours: a canvas font, so any script shows (text.bmp is A-Z).

@@ -11,7 +11,7 @@
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { ART_CLOSE, artFrame, drawFrame, frameInset } from '../skin/render/albumArt.js';
-	import { followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { followDoubleSize, onScale, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -64,13 +64,10 @@
 	const previewScale = $derived(Math.min(1, previewW / PREVIEW.w || 1, previewH / PREVIEW.h || 1));
 
 	function draw() {
-		const ctx = canvas?.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
+		if (!canvas || sprites.size === 0) return;
 		const [w, h] = [window.innerWidth, window.innerHeight];
-		canvas.width = w;
-		canvas.height = h;
-		canvas.style.width = `${w}px`;
-		canvas.style.height = `${h}px`;
+		const ctx = prepareCanvas(canvas, w, h);
+		if (!ctx) return;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, w, h);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'skin browser', isLit('skins'));
@@ -206,6 +203,7 @@
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
 		window.addEventListener('resize', draw);
+		const stopScale = onScale(draw);
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `skin browser zoom pin failed: ${e}`)),
 			'skins'
@@ -261,6 +259,7 @@
 		requestAnimationFrame(() => searchBox?.focus());
 		return () => {
 			unlistenDouble.then((f) => f());
+			stopScale();
 			unlistenSkin.then((f) => f());
 			window.removeEventListener('resize', draw);
 			window.removeEventListener('focus', draw);

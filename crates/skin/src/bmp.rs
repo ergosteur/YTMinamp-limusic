@@ -155,11 +155,13 @@ fn unpack_rle(data: &[u8], width: u32, height: u32, nibbles: bool) -> Option<Vec
         let (count, value) = (*data.get(i)? as usize, *data.get(i + 1)?);
         i += 2;
         if count > 0 {
-            // Encoded run: `count` pixels of `value`.
-            for k in 0..count {
-                set(x, y, if nibbles { nibble(value, k) } else { value });
-                x += 1;
+            // Encoded run: `count` pixels of `value`. Only the part inside the row is walked: a
+            // stream of runs past the right edge would otherwise cost a loop per pixel it claims
+            // (hundreds per byte) without drawing anything.
+            for k in 0..count.min(w.saturating_sub(x)) {
+                set(x + k, y, if nibbles { nibble(value, k) } else { value });
             }
+            x = x.saturating_add(count);
             continue;
         }
         match value {
@@ -169,8 +171,8 @@ fn unpack_rle(data: &[u8], width: u32, height: u32, nibbles: bool) -> Option<Vec
             }
             1 => break,
             2 => {
-                x += *data.get(i)? as usize;
-                y += *data.get(i + 1)? as usize;
+                x = x.saturating_add(*data.get(i)? as usize);
+                y = y.saturating_add(*data.get(i + 1)? as usize);
                 i += 2;
             }
             n => {
@@ -178,10 +180,10 @@ fn unpack_rle(data: &[u8], width: u32, height: u32, nibbles: bool) -> Option<Vec
                 let n = n as usize;
                 let len = if nibbles { n.div_ceil(2) } else { n };
                 let literal = data.get(i..i + len)?;
-                for k in 0..n {
-                    set(x, y, if nibbles { nibble(literal[k / 2], k) } else { literal[k] });
-                    x += 1;
+                for k in 0..n.min(w.saturating_sub(x)) {
+                    set(x + k, y, if nibbles { nibble(literal[k / 2], k) } else { literal[k] });
                 }
+                x = x.saturating_add(n);
                 i += len + len % 2;
             }
         }
@@ -243,6 +245,19 @@ mod tests {
         ];
         let img = decode("t.bmp", &bmp(4, 3, 8, 1, &data)).unwrap();
         assert_eq!(render(&img), ["...R", "R.R.", "RR.."]);
+    }
+
+    #[test]
+    fn rle_runs_past_the_row_cost_nothing_and_draw_nothing() {
+        // 2x1: a run of 2 red, then a stream of 255-pixel runs off the right edge, then the end.
+        // Each costs one step, not 255 (a skin full of these was a CPU sink).
+        let mut data = vec![2, 1];
+        for _ in 0..100_000 {
+            data.extend([255, 1]);
+        }
+        data.extend([0, 1]);
+        let img = decode("t.bmp", &bmp(2, 1, 8, 1, &data)).unwrap();
+        assert_eq!(render(&img), ["RR"]);
     }
 
     #[test]

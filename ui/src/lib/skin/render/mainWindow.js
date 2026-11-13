@@ -27,7 +27,7 @@ import {
   balanceFrameY,
   volumeFrameY,
 } from "./sprites.js";
-import { drawTimeDigits } from "./numbers.js";
+import { blinkHidden, drawTimeDigits } from "./numbers.js";
 import { drawText, drawTitle } from "./marquee.js";
 import { isLit } from "../focus.js";
 
@@ -35,22 +35,6 @@ import { isLit } from "../focus.js";
 
 export const MAIN_W = 275;
 export const MAIN_H = 116;
-
-/**
- * Size the canvas buffer *and* its CSS box to the window's content. Both, because the CSS size
- * must not follow the buffer through layout rules (Tailwind's preflight caps canvas width).
- * @param {HTMLCanvasElement} canvas
- * @param {number} width
- * @param {number} height
- */
-export function sizeCanvas(canvas, width, height) {
-  if (canvas.width !== width) canvas.width = width;
-  if (canvas.height !== height) canvas.height = height;
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  // Double size zooms the page: blocky pixels, like Winamp's, not a blur.
-  canvas.style.imageRendering = "pixelated";
-}
 
 /** Signed area > 0 means counter-clockwise in screen coordinates (y down). */
 function clockwise(points) {
@@ -131,7 +115,9 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
 
   const numbers = sprites.get("numbers");
   const numsEx = sprites.get("nums_ex");
-  if (numbers || numsEx) {
+  // Paused, the time blinks, as Winamp's does.
+  // Stopped, the clock is blank, as Winamp's; paused, it blinks.
+  if ((numbers || numsEx) && !uiState.stopped && !(uiState.paused && uiState.pauseBlink && blinkHidden(nowMs))) {
     const remaining = uiState.timeRemaining && uiState.durationSecs > 0;
     const secs = remaining ? uiState.durationSecs - uiState.positionSecs : uiState.positionSecs;
     drawTimeDigits(ctx, numbers, numsEx, secs, remaining);
@@ -140,7 +126,7 @@ export function drawMainWindow(ctx, sprites, uiState, nowMs) {
   const text = sprites.get("text");
   drawTitle(ctx, uiState.title, nowMs, uiState.pledit, uiState.marqueeScroll, text, uiState.bitmapTitle);
 
-  if (text) {
+  if (text && !uiState.stopped) {
     if (uiState.kbps != null) drawText(ctx, text, String(uiState.kbps).padStart(3, " ").slice(-3), KBPS_POS.x, KBPS_POS.y);
     if (uiState.khz != null) drawText(ctx, text, String(uiState.khz).padStart(2, " ").slice(-2), KHZ_POS.x, KHZ_POS.y);
   }
@@ -217,7 +203,7 @@ function drawShuffleRepeat(ctx, sprites, uiState) {
 function drawPlayPauseIndicator(ctx, sprites, uiState) {
   const sheet = sprites.get("playpaus");
   if (!sheet) return;
-  const r = uiState.playing ? PLAYPAUS.playing : PLAYPAUS.paused;
+  const r = uiState.stopped ? PLAYPAUS.stopped : uiState.playing ? PLAYPAUS.playing : PLAYPAUS.paused;
   const pos = PLAY_PAUSE_INDICATOR_POS;
   ctx.drawImage(sheet, r.x, r.y, r.w, r.h, pos.x, pos.y, r.w, r.h);
 }
@@ -225,8 +211,9 @@ function drawPlayPauseIndicator(ctx, sprites, uiState) {
 function drawMonoStereo(ctx, sprites, uiState) {
   const sheet = sprites.get("monoster");
   if (!sheet) return;
-  const mono = uiState.stereo ? MONOSTER.monoOff : MONOSTER.monoOn;
-  const stereo = uiState.stereo ? MONOSTER.stereoOn : MONOSTER.stereoOff;
+  // Stopped, neither is lit.
+  const mono = uiState.stereo || uiState.stopped ? MONOSTER.monoOff : MONOSTER.monoOn;
+  const stereo = uiState.stereo && !uiState.stopped ? MONOSTER.stereoOn : MONOSTER.stereoOff;
   ctx.drawImage(sheet, mono.x, mono.y, mono.w, mono.h, MONO_POS.x, MONO_POS.y, mono.w, mono.h);
   ctx.drawImage(sheet, stereo.x, stereo.y, stereo.w, stereo.h, STEREO_POS.x, STEREO_POS.y, stereo.w, stereo.h);
 }
@@ -236,6 +223,8 @@ function drawPosbar(ctx, sprites, uiState) {
   if (!sheet) return;
   const track = POSBAR.track;
   ctx.drawImage(sheet, track.x, track.y, track.w, track.h, POSBAR_POS.x, POSBAR_POS.y, track.w, track.h);
+  // Stopped, there's nothing to seek: Winamp hides the thumb.
+  if (uiState.stopped) return;
 
   const percent = uiState.durationSecs > 0 ? uiState.positionSecs / uiState.durationSecs : 0;
   const thumbLeft = Math.round(Math.max(0, Math.min(1, percent)) * POSBAR_THUMB_TRAVEL);

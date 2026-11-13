@@ -9,7 +9,7 @@
 	import { logUi } from '$lib/errlog';
 	import { decodeAllSprites } from '../skin/render/spritesheet.js';
 	import { artFrame, onCloseButton, drawFrame, frameInset } from '../skin/render/albumArt.js';
-	import { doubleFactor, followDoubleSize, pinOneToOnePixels } from '../skin/pixels.js';
+	import { doubleFactor, followDoubleSize, onScale, pinOneToOnePixels, prepareCanvas } from '../skin/pixels.js';
 	import { loadSkin } from '../skin/skinApi.js';
 	import { frameMouse } from '../skin/frameWindow.js';
 	import { isLit, setActivePart } from '../skin/focus.js';
@@ -38,14 +38,11 @@
 	const close = () => closeWinampPanel('eqsave').catch((e) => console.error('close failed', e));
 
 	function draw() {
-		const ctx = canvas.getContext('2d');
-		if (!ctx || sprites.size === 0) return;
+		if (!canvas || sprites.size === 0) return;
 		const w = WIDTH;
 		const h = inset.top + BODY_H + inset.bottom;
-		canvas.width = w;
-		canvas.height = h;
-		canvas.style.width = `${w}px`;
-		canvas.style.height = `${h}px`;
+		const ctx = prepareCanvas(canvas, w, h);
+		if (!ctx) return;
 		ctx.fillStyle = pledit.normalBg ?? '#000000';
 		ctx.fillRect(0, 0, w, h);
 		drawFrame(ctx, sprites, { x: 0, y: 0, w, h }, closePressed, 'save preset', isLit('eqsave'));
@@ -90,6 +87,7 @@
 		window.addEventListener('focus', draw);
 		window.addEventListener('blur', draw);
 		// The DPI fix, then double size on top, following the Winamp window's.
+		const stopScale = onScale(draw);
 		const unlistenDouble = followDoubleSize(
 			pinOneToOnePixels().catch((e) => logUi('error', `eq preset dialog zoom pin failed: ${e}`)),
 			'eqsave'
@@ -128,6 +126,7 @@
 
 		return () => {
 			unlistenDouble.then((f) => f());
+			stopScale();
 			window.removeEventListener('focus', draw);
 			window.removeEventListener('blur', draw);
 			unlistenSkin.then((f) => f());

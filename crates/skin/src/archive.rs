@@ -6,6 +6,9 @@ use crate::error::Error;
 /// The most one file in a skin is read to: a 2048×2048 32-bit BMP (`bmp::MAX_SIDE`) is 16 MiB,
 /// classic sprites are a few KiB. Bounds a zip bomb, and a declared size that lies.
 const MAX_ENTRY: u64 = 17 << 20;
+/// The most read out of one skin altogether: a classic skin is well under a megabyte unpacked.
+/// Bounds the work a skin of many entries at the per-entry limit can cause.
+const MAX_TOTAL: u64 = 64 << 20;
 
 /// A `.wsz` is just a zip file. Real-world skins disagree on layout: some put every file at
 /// the zip root, others nest everything under a folder named after the skin (e.g. `Excel and
@@ -16,11 +19,18 @@ pub struct SkinArchive {
     /// lowercase basename -> index into `archive`. First match wins if a name somehow repeats
     /// under multiple directories (not expected for a single skin).
     index_by_basename: HashMap<String, usize>,
+    /// Bytes read so far, against `MAX_TOTAL`.
+    read_total: u64,
 }
 
 impl SkinArchive {
     pub fn open(bytes: &[u8]) -> Result<Self, Error> {
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec()))?;
+        // Entries sharing one stretch of compressed data would let a small file name many big
+        // ones: no real zip does that.
+        if archive.has_overlapping_files()? {
+            return Err(Error::OverlappingEntries);
+        }
         let mut index_by_basename = HashMap::new();
         for i in 0..archive.len() {
             // Raw: only the name is needed, and an entry this crate can't decompress (encrypted,
@@ -35,7 +45,7 @@ impl SkinArchive {
                 index_by_basename.entry(base.to_lowercase()).or_insert(i);
             }
         }
-        Ok(SkinArchive { archive, index_by_basename })
+        Ok(SkinArchive { archive, index_by_basename, read_total: 0 })
     }
 
     /// Read a file's bytes by basename (e.g. `"main.bmp"`, `"region.txt"`), case-insensitive.
@@ -45,12 +55,15 @@ impl SkinArchive {
     pub fn read(&mut self, filename: &str) -> Option<Vec<u8>> {
         let idx = *self.index_by_basename.get(&filename.to_lowercase())?;
         let file = self.archive.by_index(idx).ok()?;
-        if file.size() > MAX_ENTRY {
+        let left = MAX_TOTAL.saturating_sub(self.read_total);
+        if file.size() > MAX_ENTRY || file.size() > left {
             return None;
         }
+        let limit = MAX_ENTRY.min(left);
         let mut buf = Vec::with_capacity(file.size() as usize);
-        file.take(MAX_ENTRY + 1).read_to_end(&mut buf).ok()?;
-        (buf.len() as u64 <= MAX_ENTRY).then_some(buf)
+        file.take(limit + 1).read_to_end(&mut buf).ok()?;
+        self.read_total += buf.len() as u64;
+        (buf.len() as u64 <= limit).then_some(buf)
     }
 
     /// Every basename present (lowercase), so callers can discover e.g. all `*.bmp` files

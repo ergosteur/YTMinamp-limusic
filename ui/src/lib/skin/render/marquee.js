@@ -117,11 +117,11 @@ export function drawTitle(ctx, title, nowMs, pledit, scroll = true, textSheet, b
     }
     if (bitmap && spellable(title)) return drawBitmapTitle(ctx, textSheet, title, nowMs, scroll);
   }
-  // A TrueType line is taller than text.bmp's 6px row, so it's centred on that row (many skins
-  // frame it in a box there) and clipped a little above and below it, well clear of the
-  // kbps/kHz row at y 43.
-  const top = MARQUEE_POS.y - 2;
-  const h = MARQUEE_POS.h + 8;
+  // A TrueType line is taller than text.bmp's 6px row: its capitals stand on that row's bottom, as
+  // Winamp/WACUP draw it, and it's clipped from a little above Webamp's title box (accents) to a
+  // little below it (descenders), clear of the kbps/kHz row at y 43.
+  const top = MARQUEE_POS.y - 5;
+  const h = MARQUEE_POS.h + 12;
   ctx.save();
   ctx.beginPath();
   ctx.rect(MARQUEE_POS.x, top, MARQUEE_POS.w, h);
@@ -129,10 +129,11 @@ export function drawTitle(ctx, title, nowMs, pledit, scroll = true, textSheet, b
   ctx.font = `11px ${pledit.font ? `"${pledit.font}", ` : ""}Arial, sans-serif`;
   // text.bmp's colour, as Winamp's title; the playlist's only for a sheet without one.
   ctx.fillStyle = (textSheet && textInk(/** @type {any} */ (textSheet))) || pledit.normal || "#00ff00";
-  ctx.textBaseline = "middle";
+  // The baseline under the bitmap row (a fixed row rather than a centre, which the font's metrics
+  // would move).
+  ctx.textBaseline = "alphabetic";
   ctx.textAlign = "left";
-  // Centred on the bitmap row, two pixels low so capitals sit in it rather than over its top.
-  const y = MARQUEE_POS.y + MARQUEE_POS.h / 2 + 2;
+  const y = MARQUEE_POS.y + MARQUEE_POS.h;
   const width = ctx.measureText(title).width;
   if (width <= MARQUEE_POS.w || !scroll) {
     ctx.fillText(title, MARQUEE_POS.x, y);

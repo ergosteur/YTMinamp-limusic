@@ -30,6 +30,9 @@ use archive::SkinArchive;
 /// A real skin's sprites come to well under a megapixel; a hostile one could otherwise ship
 /// hundreds of tiny files each claiming `bmp::MAX_SIDE` squared.
 const MAX_PIXELS: usize = 16 << 20;
+/// Bitmaps decoded per skin at most. A classic skin has 15 or so (main.bmp leads the list);
+/// a hostile one could otherwise ship thousands, each costing a decode however small its output.
+const MAX_BMPS: usize = 64;
 
 /// A fully parsed classic skin: every `*.bmp` found in the archive, decoded, keyed by its
 /// lowercase filename without extension (`"main"`, `"cbuttons"`, `"eqmain"`, ...); the window
@@ -59,6 +62,7 @@ pub fn load(bytes: &[u8]) -> Result<Skin, Error> {
         archive.basenames().filter(|name| name.ends_with(".bmp")).map(str::to_owned).collect();
     // main.bmp first, so the budget below never skips it.
     bmp_names.sort_by_key(|name| name != "main.bmp");
+    bmp_names.truncate(MAX_BMPS);
 
     let mut sprites = HashMap::new();
     let mut pixels = 0usize;

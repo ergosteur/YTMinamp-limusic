@@ -503,8 +503,18 @@ pub fn run() {
     //     LIMUSIC_MULTI=1 XDG_DATA_HOME=/tmp/limusic-b ./target/debug/limusic-app
     if std::env::var_os("LIMUSIC_MULTI").is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            tray::show_main(app);
             // `limusic-app <link>` against this instance (#348). argv[0] leads on every platform.
+            // ytminamp: a YouTube Music link stays in Winamp mode when that's already on screen,
+            // instead of `show_main` tearing it down for Limusic's Open-link dialog, which never
+            // renders in the Winamp window.
+            if args.get(1).is_some_and(|a| a.contains("music.youtube.com")) && winamp::is_showing(app) {
+                let _ = app.emit_to(winamp::LABEL, "open-link", &args[1..]);
+                if let Some(w) = app.get_webview_window(winamp::LABEL) {
+                    let _ = w.set_focus();
+                }
+                return;
+            }
+            tray::show_main(app);
             if args.len() > 1 {
                 let _ = app.emit_to("main", "open-link", &args[1..]);
             }
@@ -1044,34 +1054,35 @@ pub fn run() {
             commands::set_mini_compact,
             brand::latest_release,
             winamp::set_stop_after_current,
+            winamp::winamp_stop,
             winamp::stop_after_current_set,
             winamp::limusic_window_shown,
             winamp::show_limusic_window,
             winamp::set_viz_levels,
-            commands::open_winamp,
-            commands::close_winamp,
-            commands::resize_winamp,
-            commands::winamp_fits,
-            commands::winamp_work_width,
-            commands::winamp_to_tray,
-            commands::winamp_close,
-            commands::load_wsz_skin,
-            commands::select_wsz_skin,
-            commands::list_wsz_skins,
-            commands::preview_wsz_skin,
-            commands::winamp_start_drag,
-            commands::import_wsz_skin,
-            commands::open_skins_dir,
-            commands::winamp_audio_info,
-            commands::winamp_popup_menu,
-            commands::winamp_queue_intro,
-            commands::winamp_prefs,
-            commands::set_winamp_prefs,
-            commands::set_winamp_always_on_top,
-            commands::set_winamp_eq,
-            commands::open_winamp_panel,
-            commands::close_winamp_panel,
-            commands::resize_winamp_panel,
+            winamp::open_winamp,
+            winamp::close_winamp,
+            winamp::resize_winamp,
+            winamp::winamp_fits,
+            winamp::winamp_work_width,
+            winamp::winamp_to_tray,
+            winamp::winamp_close,
+            winamp::load_wsz_skin,
+            winamp::select_wsz_skin,
+            winamp::list_wsz_skins,
+            winamp::preview_wsz_skin,
+            winamp::winamp_start_drag,
+            winamp::import_wsz_skin,
+            winamp::open_skins_dir,
+            winamp::winamp_audio_info,
+            winamp::winamp_popup_menu,
+            winamp::winamp_queue_intro,
+            winamp::winamp_prefs,
+            winamp::set_winamp_prefs,
+            winamp::set_winamp_always_on_top,
+            winamp::set_winamp_eq,
+            winamp::open_winamp_panel,
+            winamp::close_winamp_panel,
+            winamp::resize_winamp_panel,
             commands::show_main,
             commands::take_launch_args,
             commands::get_home,

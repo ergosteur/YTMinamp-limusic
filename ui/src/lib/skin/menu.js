@@ -79,6 +79,9 @@ import {
 	setSearchKind,
 	toggleMarqueeScroll,
 	toggleBitmapTitle,
+	toggleTitleNumbers,
+	toggleSkinTransparency,
+	togglePauseBlink,
 	toggleMilkdropOnStart,
 	playIndex,
 	toggleMilkdrop,
@@ -108,6 +111,7 @@ import { lt } from '$lib/lt.svelte';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { uiState } from './uiState.js';
+import { PATTERN_NAMES } from './testPattern.js';
 import {
 	clearUpcoming,
 	addablePlaylists,
@@ -492,7 +496,16 @@ export function showVisMenu(at) {
 					text: 'Analyser levels',
 					items: [
 						check('Winamp', uiState.vizLevels === 'winamp', '', () => setVizLevels('winamp')),
-						check('Linear', uiState.vizLevels === 'linear', '', () => setVizLevels('linear'))
+						check('Linear', uiState.vizLevels === 'linear', '', () => setVizLevels('linear')),
+						SEPARATOR,
+						{
+							text: 'Test patterns',
+							items: [
+								check('Off (live levels)', uiState.testPattern === null, '', () => (uiState.testPattern = null)),
+								SEPARATOR,
+								...PATTERN_NAMES.map((name, i) => check(name, uiState.testPattern === i, '', () => (uiState.testPattern = i)))
+							]
+						}
 					]
 				}
 			]
@@ -1079,8 +1092,13 @@ export function showMainMenu(switchSkin, at) {
 						check('Always on top', uiState.alwaysOnTop, 'Ctrl+A', toggleAlwaysOnTop),
 						check('Double size', uiState.doubleSize, 'Ctrl+2', () => toggleDoubleSize()),
 						check('Time remaining', uiState.timeRemaining, 'Ctrl+T', toggleTimeRemaining),
+						check('Blink time display while paused', uiState.pauseBlink, '', togglePauseBlink),
 						// Winamp 5's: text.bmp for a title it can spell, the TrueType font otherwise.
 						check('Use bitmap font for main title display', uiState.bitmapTitle, '', toggleBitmapTitle),
+						// Winamp's own title, "2. Artist - Title (2:54)"; off, Artist - Title alone.
+						check('Show track number and length in title', uiState.titleNumbers, '', toggleTitleNumbers),
+						// Off: skins exactly as Winamp draws them, ignoring pledit.txt's YTMinampTransparent.
+						check('Allow skin transparency (YTMinamp)', uiState.skinTransparency, '', () => void toggleSkinTransparency()),
 						SEPARATOR,
 						check('Always start in Winamp mode', uiState.startInWinamp, '', toggleStartInWinamp),
 						// Limusic's setting itself, so its Settings and this agree.

@@ -51,6 +51,14 @@ pub fn window_labels() -> impl Iterator<Item = String> {
     std::iter::once(LABEL.to_owned()).chain(PANELS.iter().map(|p| format!("winamp-{p}")))
 }
 
+/// Whether Winamp mode is on screen right now: open and visible, not closed to the tray (that
+/// leaves the window existing but hidden) and not just a preference for next launch (see
+/// `start_in_winamp`). A second launch's link stays here instead of tearing this down for
+/// Limusic's Open-link dialog, which never renders in this window.
+pub fn is_showing(app: &AppHandle) -> bool {
+    app.get_webview_window(LABEL).is_some_and(|w| w.is_visible().unwrap_or(false))
+}
+
 /// Put a Winamp window back where it was last left, as the window-state plugin recorded it
 /// (lib.rs). Only where windows can be placed: native Wayland lets the compositor choose. Their
 /// sizes are the UI's: the skin's, the panels' remembered ones, the Media Library's default.
@@ -614,7 +622,7 @@ fn place_bundled(app: &AppHandle, dir: &std::path::Path) {
     for &(name, bytes) in bundled::BUNDLED {
         let hash = fnv1a(bytes);
         let path = dir.join(name);
-        let on_disk = std::fs::read(&path).ok().map(|b| fnv1a(&b));
+        let on_disk = read_skin_file(&path).ok().map(|b| fnv1a(&b));
         let write = should_place(placed.get(name).copied(), on_disk, hash);
         if write {
             if let Err(e) = std::fs::write(&path, bytes) {
@@ -797,19 +805,58 @@ fn collect_skins(
     Ok(())
 }
 
+/// The largest skin file read: classic skins are tens of kilobytes, the biggest a few megabytes.
+const MAX_SKIN_FILE: u64 = 16 << 20;
+
+/// A skin file's bytes: a regular file (not a device or a pipe, which never end) no bigger than
+/// [`MAX_SKIN_FILE`], so a hostile or mistaken pick can't fill memory.
+fn read_skin_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let unreadable = |e: std::io::Error| format!("couldn't read {}: {e}", path.display());
+    let meta = std::fs::metadata(path).map_err(unreadable)?;
+    if !meta.is_file() {
+        return Err(format!("{} isn't a file", path.display()));
+    }
+    if meta.len() > MAX_SKIN_FILE {
+        return Err(format!("{} is too big for a Winamp skin", path.display()));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    std::fs::File::open(path)
+        .and_then(|f| f.take(MAX_SKIN_FILE + 1).read_to_end(&mut bytes))
+        .map_err(unreadable)?;
+    if bytes.len() as u64 > MAX_SKIN_FILE {
+        return Err(format!("{} is too big for a Winamp skin", path.display()));
+    }
+    Ok(bytes)
+}
+
 /// Copy a picked skin file into [`skins_dir`] and return its new path. Parsed first, so a file
 /// that isn't a usable skin never lands in the menu. A skin of the same name is only replaced
 /// with `replace` (the UI asks first).
 pub fn import(app: &AppHandle, src: &str, replace: bool) -> Result<String, String> {
-    let bytes = std::fs::read(src).map_err(|e| format!("couldn't read {src}: {e}"))?;
+    let src_path = std::path::Path::new(src);
+    if !is_skin_file(src_path) {
+        return Err(format!("{src} isn't a .wsz or .zip skin"));
+    }
+    let bytes = read_skin_file(src_path)?;
     skin::load(&bytes).map_err(|e| format!("not a Winamp skin: {e}"))?;
-    let name = std::path::Path::new(src).file_name().ok_or("no file name")?;
+    let name = src_path.file_name().ok_or("no file name")?;
     let dest = skins_dir(app)?.join(name);
-    if std::path::Path::new(src) != dest {
-        if dest.exists() && !replace {
-            return Err(format!("{} is already in the skins folder", name.to_string_lossy()));
+    if src_path != dest {
+        if dest.exists() || dest.is_symlink() {
+            if !replace {
+                return Err(format!("{} is already in the skins folder", name.to_string_lossy()));
+            }
+            std::fs::remove_file(&dest).map_err(|e| e.to_string())?;
         }
-        std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+        // A new file, never through whatever (a link, say) was there.
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+            .and_then(|mut f| f.write_all(&bytes))
+            .map_err(|e| e.to_string())?;
     }
     Ok(dest.to_string_lossy().into_owned())
 }
@@ -933,6 +980,234 @@ pub fn stop_after_current_set() -> bool {
     STOP_AFTER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Winamp's Stop: the track unloaded (mpv idle), not paused. The queue keeps its place, so Play
+/// (`toggle_pause`, `resume_or_toggle`) loads the current track again from the start, as after a
+/// launch. Guests' playback is the host's, so it's left alone, as their pause is.
+#[tauri::command]
+pub async fn winamp_stop(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<std::sync::Arc<crate::state::AppState>>();
+    if state.lt.is_guest().await {
+        return Ok(());
+    }
+    state.player.stop().map_err(|e| e.to_string())
+}
+
+// --- Tauri commands (moved from commands.rs, which only wrapped these) -------------------------
+
+/// Swap the app for the Winamp-skinned window: the main window hides to the tray behind it.
+/// Same main-thread hop as `open_mini` — GTK wants window creation there.
+#[tauri::command]
+pub async fn open_winamp(app: AppHandle) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(open(&handle));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|_| "winamp mode never answered".to_string())?
+}
+
+/// Swap back. Same path as the tray, so Winamp mode and the tray can't disagree about what
+/// "show Limusic" means.
+#[tauri::command]
+pub async fn close_winamp(app: AppHandle) -> Result<(), String> {
+    crate::tray::show_main(&app);
+    Ok(())
+}
+
+/// The skin UI resizing itself (double-size mode, shade mode) — the window has no native resize
+/// handles (`resizable: false`), so this is the only way its size changes.
+#[tauri::command]
+pub async fn resize_winamp(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    resize(&app, width, height);
+    Ok(())
+}
+
+/// Whether a `width`x`height` Winamp window fits its screen (double size checks first).
+#[tauri::command]
+pub fn winamp_fits(app: AppHandle, width: f64, height: f64) -> bool {
+    fits(&app, width, height)
+}
+
+/// How wide the Winamp window's screen is, less panels (docked panels narrow to fit it).
+#[tauri::command]
+pub fn winamp_work_width(app: AppHandle) -> Option<f64> {
+    work_width(&app)
+}
+
+/// Winamp mode's Close to tray (Ctrl+W): every Winamp window hidden, playback going on. False
+/// when there's no tray to come back from, and nothing was hidden.
+#[tauri::command]
+pub fn winamp_to_tray(app: AppHandle) -> bool {
+    hide_to_tray(&app)
+}
+
+/// The Winamp window's ✕: to the tray, or quit, as its Alt+F4 does.
+#[tauri::command]
+pub fn winamp_close(app: AppHandle) {
+    close_requested(&app);
+}
+
+/// The remembered skin, parsed into sprite sheets (PNG-encoded) + window shape/colors for the
+/// Winamp UI. Falls back to the built-in skin.
+#[tauri::command]
+pub async fn load_wsz_skin(app: AppHandle) -> Result<SkinPayload, String> {
+    load_current(&app).await
+}
+
+/// Switch skins (`None` = built-in) and remember the choice.
+#[tauri::command]
+pub async fn select_wsz_skin(app: AppHandle, path: Option<String>) -> Result<SkinPayload, String> {
+    select(&app, path).await
+}
+
+/// The playing stream's kbps / kHz / channel count, for the Winamp display. Polled: mpv has no
+/// event for these and they only change per track.
+#[tauri::command]
+pub async fn winamp_audio_info(app: AppHandle) -> Result<serde_json::Value, String> {
+    let state = app.state::<std::sync::Arc<crate::state::AppState>>();
+    let (bitrate, samplerate, channels) = state.player.audio_info();
+    Ok(serde_json::json!({
+        "kbps": bitrate.map(|b| (b / 1000.0).round() as i64),
+        "khz": samplerate.map(|r| (r as f64 / 1000.0).round() as i64),
+        "channels": channels,
+    }))
+}
+
+/// The skin's right-click menu, popped up without blocking (see [`popup_menu`]). Linux
+/// only: elsewhere it fails and the UI falls back to Tauri's menu API, whose popups are modal but
+/// reliable on Windows and macOS.
+#[tauri::command]
+pub async fn winamp_popup_menu(
+    app: AppHandle,
+    window: tauri::Window,
+    items: Vec<MenuEntry>,
+    x: f64,
+    y: f64,
+    on: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return popup_menu(&app, window.label().to_owned(), on, items, x, y);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, window, items, x, y, on);
+        Err("not on this platform".into())
+    }
+}
+
+/// Winamp mode's llama intro (a first run's playlist, About's "Cue the Llama"): `item` onto the
+/// queue. Into an empty queue it goes paused, as a saved queue comes back at launch
+/// (`restore_queue`), so it waits for Play like Winamp's own demo.mp3; an ordinary add would
+/// start it. Behind anything already queued it's an ordinary add, unless `if_empty` (the first
+/// run's: someone coming from Limusic's window keeps their queue as it was).
+#[tauri::command]
+pub async fn winamp_queue_intro(app: AppHandle, item: innertube::SongItem, if_empty: bool) -> Result<(), String> {
+    let state = app.state::<std::sync::Arc<crate::state::AppState>>().inner().clone();
+    let queue = state.queue_snapshot().await;
+    if queue["items"].as_array().map_or(false, |items| !items.is_empty()) {
+        if !if_empty {
+            state.add_to_queue(vec![item], None, None).await;
+        }
+        return Ok(());
+    }
+    let saved = serde_json::json!({ "items": [item], "current": 0, "repeat": queue["repeat"] });
+    state.db.set_setting("queue_json", &saved.to_string());
+    state.db.set_setting("queue_position", "0");
+    state.restore_queue().await;
+    Ok(())
+}
+
+/// Float a Winamp panel (`art`, `playlist`, `search`) in its own window. Same main-thread hop as
+/// `open_winamp`.
+#[tauri::command]
+pub async fn open_winamp_panel(app: AppHandle, kind: String, width: f64, height: f64) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(open_panel(&handle, &kind, width, height));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|_| "panel window never answered".to_string())?
+}
+
+/// Close a floating panel's window (docking it back, or hiding it).
+#[tauri::command]
+pub async fn close_winamp_panel(app: AppHandle, kind: String) -> Result<(), String> {
+    close_panel(&app, &kind);
+    Ok(())
+}
+
+/// A floating panel window resizing itself.
+#[tauri::command]
+pub async fn resize_winamp_panel(app: AppHandle, kind: String, width: f64, height: f64) -> Result<(), String> {
+    resize_panel(&app, &kind, width, height)
+}
+
+/// Winamp mode's remembered UI state (panel placement, EQ, double size, ...).
+#[tauri::command]
+pub async fn winamp_prefs(app: AppHandle) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    Ok(ui_prefs(&app))
+}
+
+/// Remember some of Winamp mode's UI state: `patch`'s top-level keys replace the stored ones.
+#[tauri::command]
+pub async fn set_winamp_prefs(app: AppHandle, patch: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    merge_ui_prefs(&app, patch)
+}
+
+/// The EQ window changed: retune the equalizer filter (viz.rs). Remembering it is the UI's job.
+#[tauri::command]
+pub async fn set_winamp_eq(app: AppHandle, eq: crate::viz::Eq) -> Result<(), String> {
+    crate::viz::set_eq(&app, eq);
+    Ok(())
+}
+
+/// The clutterbar's A: keep every Winamp window above others (remembered).
+#[tauri::command]
+pub async fn set_winamp_always_on_top(app: AppHandle, on: bool) -> Result<(), String> {
+    set_always_on_top(&app, on)
+}
+
+/// The skins folder's contents, for the skin menu.
+#[tauri::command]
+pub async fn list_wsz_skins(app: AppHandle) -> Result<SkinList, String> {
+    list(&app)
+}
+
+/// A Winamp window's drag, from its own canvas (see [`start_drag`]).
+#[tauri::command]
+pub fn winamp_start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
+    start_drag(&window)
+}
+
+/// The Skin Browser's preview of a skin (`None` = built-in), without switching to it.
+#[tauri::command]
+pub async fn preview_wsz_skin(app: AppHandle, path: Option<String>) -> Result<SkinPayload, String> {
+    preview(&app, path).await
+}
+
+/// Copy a picked `.wsz` into the skins folder; returns its new path.
+#[tauri::command]
+pub async fn import_wsz_skin(app: AppHandle, path: String, replace: bool) -> Result<String, String> {
+    import(&app, &path, replace)
+}
+
+/// Show the skins folder in the file manager.
+#[tauri::command]
+pub async fn open_skins_dir(app: AppHandle) -> Result<(), String> {
+    let dir = skins_dir(&app)?;
+    #[cfg(target_os = "linux")]
+    let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "linux")]
+    crate::lastfm::unappimage(&mut cmd);
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    cmd.arg(dir).spawn().map_err(|e| format!("couldn't open the skins folder: {e}"))?;
+    Ok(())
+}
+
 /// Sheets a skin may leave out that Winamp then takes from its base skin. Not `gen`/`genex`: a skin
 /// without them gets its generic windows framed in its own playlist editor's graphics instead
 /// (render/albumArt.js `artFrame`), which match it better than the base skin's grey.
@@ -963,8 +1238,17 @@ fn fill_from_base(skin: &mut skin::Skin) {
 /// (PNG-encoded) plus the window shape/colors/playlist styling the UI needs to draw it, with
 /// any sheet it lacks taken from the base skin.
 async fn load(path: Option<&str>) -> Result<SkinPayload, String> {
+    // Parsing and PNG-encoding is CPU work: off the async workers, so a slow skin can't hold up
+    // other commands.
+    let path = path.map(str::to_owned);
+    tauri::async_runtime::spawn_blocking(move || load_blocking(path.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn load_blocking(path: Option<&str>) -> Result<SkinPayload, String> {
     let bytes = match path {
-        Some(path) => std::fs::read(path).map_err(|e| format!("couldn't read {path}: {e}"))?,
+        Some(path) => read_skin_file(std::path::Path::new(path))?,
         None => DEFAULT_SKIN.to_vec(),
     };
     let mut parsed = skin::load(&bytes).map_err(|e| e.to_string())?;

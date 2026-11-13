@@ -1,5 +1,13 @@
 import { NUMBERS, NUMS_EX, TIME_MINUS_POS, TIME_MINUTE_TENS_POS, TIME_MINUTE_UNITS_POS, TIME_SECOND_TENS_POS, TIME_SECOND_UNITS_POS } from "./sprites.js";
 
+/** How long a paused clock shows, then hides, its time: WACUP's blink, timed from a recording. */
+export const PAUSE_BLINK_MS = 1200;
+
+/** Whether a paused clock is in the hidden half of its blink at `nowMs`. @param {number} nowMs */
+export function blinkHidden(nowMs) {
+  return Math.floor(nowMs / PAUSE_BLINK_MS) % 2 === 1;
+}
+
 /**
  * Draws the MM:SS time display. Prefers `nums_ex.bmp`, falls back to `numbers.bmp`, as Winamp and
  * Webamp do (Skin.tsx's numExIsUsed): real skins ship either one, the other, or both, and where

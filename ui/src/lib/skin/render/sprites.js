@@ -220,7 +220,11 @@ export function charRect(char) {
   return { x: col * CHAR_W, y: row * CHAR_H, w: CHAR_W, h: CHAR_H };
 }
 
-export const MARQUEE_POS = { x: 111, y: 24, w: 154, h: 6 };
+/** The title's text row, where Winamp draws text.bmp's 6px letters: Webamp's #marquee box (top 24)
+ * plus its 3px padding. */
+export const MARQUEE_POS = { x: 111, y: 27, w: 154, h: 6 };
+/** The title's clickable box: Webamp's #marquee with its padding (scrolling, double-click). */
+export const MARQUEE_HIT = { x: 111, y: 24, w: 154, h: 12 };
 /** The Winamp logo, bottom right: click for About (Webamp's main-window.css #about). */
 export const ABOUT_POS = { x: 253, y: 91, w: 13, h: 15 };
 export const MARQUEE_SEPARATOR = "  ***  ";

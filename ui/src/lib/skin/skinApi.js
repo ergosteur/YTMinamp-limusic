@@ -24,8 +24,9 @@ import { LYRICS_W, dockedLayout } from './layout.js';
 import { EQ_H, EQ_W } from './render/equalizer.js';
 import { announceDoubleSize, doubleFactor, setScale } from './pixels.js';
 import { checkForUpdatesQuiet, QUIET_INTERVAL_MS, updateState } from '$lib/updater.svelte';
-import { loadPrefs, pref, savePref } from './prefs.js';
+import { flushPrefs, loadPrefs, pref, savePref } from './prefs.js';
 import { artSize } from './render/albumArt.js';
+import { decodeAllSprites, keyOutEqSliders } from './render/spritesheet.js';
 import { openLibraryWindow } from './library.js';
 
 /** @typedef {import('$lib/api').SkinPayload} SkinPayload */
@@ -33,6 +34,30 @@ import { openLibraryWindow } from './library.js';
 /** The remembered skin (or the one built into the binary). @returns {Promise<SkinPayload>} */
 export function loadSkin() {
 	return api.loadWszSkin();
+}
+
+/** Sent to the Winamp window to load the skin again (it then tells the other windows). */
+export const SKIN_RELOAD_EVENT = 'winamp-skin-reload';
+
+/**
+ * A skin's sprites decoded, for the windows that draw the EQ: with YTMinamp's see-through slider
+ * backgrounds (`keyOutEqSliders`) unless Options ▸ Allow skin transparency is off.
+ * @param {SkinPayload} payload
+ */
+export async function skinSprites(payload) {
+	const sprites = await decodeAllSprites(payload.sprites);
+	/** @type {Record<string, unknown>} */
+	const prefs = await api.winampPrefs().catch(() => ({}));
+	if (prefs.skinTransparency === false) return sprites;
+	return keyOutEqSliders(sprites, payload.pledit.ytminampTransparent);
+}
+
+/** Options ▸ Allow skin transparency: YTMinamp's extension, or the skin drawn as Winamp draws it. */
+export async function toggleSkinTransparency() {
+	uiState.skinTransparency = !uiState.skinTransparency;
+	savePref('skinTransparency', uiState.skinTransparency);
+	await flushPrefs().catch(log('saving winamp prefs'));
+	emit(SKIN_RELOAD_EVENT).catch(log('skin reload'));
 }
 
 /** Switch to `path` (null = built-in) and remember it. @returns {Promise<SkinPayload>} */
@@ -164,22 +189,41 @@ export function setVolume(volume) {
 	return Promise.resolve();
 }
 
+/** Every Winamp window hears a Stop: each draws the stopped state itself (`uiState.stopped`). */
+export const STOPPED_EVENT = 'winamp-stopped';
+
 /**
- * Classic Winamp's Stop halts playback outright; limusic's queue model has no separate "stopped"
- * state, only playing/paused. Pausing is the closest real behavior — a no-op if already paused,
- * rather than toggling back to playing.
+ * Winamp's Stop (V): the track unloaded rather than paused (winamp.rs `winamp_stop`), the queue
+ * keeping its place. Every Winamp window then shows it stopped (`markStopped`), and Play starts the
+ * track again from the top.
  */
 export function stopPlayback() {
-	return playback.paused ? Promise.resolve() : api.togglePause();
+	return api.winampStop().then(() => emit(STOPPED_EVENT, true));
 }
 
-/** Winamp's Play (X): carry on if paused, back to the start if already playing. */
+/** A Stop happened (from any window): this one draws it until playback moves again. */
+export function markStopped() {
+	uiState.stopped = true;
+	uiState.stoppedSeenPaused = false;
+}
+
+/** Per frame: a stop is over once playback moves again (Play, the playlist, media keys, Limusic's
+ * window). Only after it has been seen paused: the stop's own state can land a frame late. */
+export function followStopped() {
+	if (!uiState.stopped) return;
+	if (playback.paused) uiState.stoppedSeenPaused = true;
+	else if (uiState.stoppedSeenPaused) uiState.stopped = false;
+}
+
+/** Winamp's Play (X): carry on if paused, back to the start if already playing; stopped, the
+ * track again from the top (mpv has nothing loaded, so Limusic's play/pause loads it). */
 export function play() {
 	return afterStop() ?? (playback.paused ? api.togglePause() : api.seek(0));
 }
 
-/** Winamp's Pause (C): pause, or carry on if paused. */
+/** Winamp's Pause (C): pause, or carry on if paused; nothing while stopped, as Winamp's. */
 export function pause() {
+	if (uiState.stopped) return Promise.resolve();
 	return afterStop() ?? api.togglePause();
 }
 
@@ -220,7 +264,7 @@ export function followStopAfter() {
 }
 
 let fadingOut = false;
-/** Winamp's "Stop w/ fadeout" (Shift+V): the volume down over a second and a half, then stop. */
+/** Winamp's "Stop w/ fadeout" (Shift+V): the volume down over a second and a half, then a Stop. */
 export async function stopWithFadeout() {
 	if (playback.paused || fadingOut) return;
 	fadingOut = true;
@@ -231,7 +275,7 @@ export async function stopWithFadeout() {
 			dragVolume(Math.round(from * (1 - i / 15)));
 			await new Promise((r) => setTimeout(r, 100));
 		}
-		if (!playback.paused) await api.togglePause();
+		if (!playback.paused) await stopPlayback();
 	} finally {
 		// Back where it was, live only: the saved level never moved (dragVolume doesn't save).
 		dragVolume(from);
@@ -500,11 +544,14 @@ export async function restorePrefs() {
 	Object.assign(uiState.eq, pref('eq', {}));
 	uiState.lyrics.zoom = pref('lyricsZoom', 1);
 	uiState.startInWinamp = pref('startInWinamp', true);
+	uiState.skinTransparency = pref('skinTransparency', true);
 	uiState.art.caption = pref('artCaption', false);
 	uiState.art.tall = pref('artTall', false);
 	uiState.search.kind = pref('searchKind', 'songs');
 	uiState.marqueeScroll = pref('marqueeScroll', true);
 	uiState.bitmapTitle = pref('bitmapTitle', false);
+	uiState.titleNumbers = pref('titleNumbers', true);
+	uiState.pauseBlink = pref('pauseBlink', true);
 	uiState.milkdropOnStart = pref('milkdropOnStart', false);
 	if (uiState.milkdropOnStart && !uiState.milkdrop) toggleMilkdrop();
 	uiState.lyrics.width = pref('lyricsWidth', LYRICS_W);
@@ -698,6 +745,18 @@ export function toggleBitmapTitle() {
 	savePref('bitmapTitle', uiState.bitmapTitle);
 }
 
+/** "Show track number and length in title" (Options). */
+export function toggleTitleNumbers() {
+	uiState.titleNumbers = !uiState.titleNumbers;
+	savePref('titleNumbers', uiState.titleNumbers);
+}
+
+/** "Blink time display while paused" (Options). */
+export function togglePauseBlink() {
+	uiState.pauseBlink = !uiState.pauseBlink;
+	savePref('pauseBlink', uiState.pauseBlink);
+}
+
 /** "Run the plug-in on start-up" (the analyzer's right-click menu). */
 export function toggleMilkdropOnStart() {
 	uiState.milkdropOnStart = !uiState.milkdropOnStart;
@@ -802,6 +861,24 @@ export function searchKeydown(e, input, size, close) {
 		input.blur();
 		close();
 	}
+}
+
+/**
+ * The playlist's own ArrowUp/ArrowDown (`keys.js`'s `plUp`/`plDown`, caught there only when the
+ * playlist is the pane last clicked): move the single-row selection, scrolling just enough to
+ * keep it in view, the same minimal-scroll math as `searchKeydown`'s arrows.
+ * @param {1 | -1} step @param {{ w: number, h: number } | undefined} [size] the panel's, if not docked
+ */
+export function movePlaylistSelection(step, size) {
+	const count = playback.queue.items.length;
+	if (!count) return;
+	const pl = uiState.pl;
+	const i = Math.max(0, Math.min(count - 1, (pl.selected ?? -1) + step));
+	selectOnly(pl, i);
+	const rows = listRows('playlist', size).rows;
+	const max = maxScroll(count, rows);
+	if (i < pl.scroll) pl.scroll = i;
+	else if (i >= pl.scroll + rows) pl.scroll = Math.min(max, i - rows + 1);
 }
 
 /** @param {string} query */

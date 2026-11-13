@@ -42,15 +42,16 @@ pub fn parse(text: &str) -> Region {
 
     let group = |nums: &[usize], pts: &[(i32, i32)]| -> Vec<Vec<(i32, i32)>> {
         let mut polygons = Vec::new();
-        let mut idx = 0;
+        let mut idx = 0usize;
         for &n in nums {
-            match pts.get(idx..idx + n) {
+            let Some(end) = idx.checked_add(n) else { break };
+            match pts.get(idx..end) {
                 Some(slice) => polygons.push(slice.to_vec()),
                 // A malformed file (counts that overrun the point list) stops grouping rather
                 // than panicking — whatever polygons parsed cleanly are kept.
                 None => break,
             }
-            idx += n;
+            idx = end;
         }
         polygons
     };

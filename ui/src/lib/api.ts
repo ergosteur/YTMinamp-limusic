@@ -567,6 +567,8 @@ export const resizeWinamp = (width: number, height: number) =>
 /** Winamp's "Stop after current": pause at the end of this track (winamp.rs). */
 export const setStopAfterCurrent = (on: boolean) => invoke<void>('set_stop_after_current', { on });
 export const stopAfterCurrentSet = () => invoke<boolean>('stop_after_current_set');
+/** Winamp's Stop: the track unloaded, Play starting it again from the top (winamp.rs). */
+export const winampStop = () => invoke<void>('winamp_stop');
 /** Media Library (Alt+L): Limusic's own window, up or not, and shown or hidden (winamp.rs). */
 export const limusicWindowShown = () => invoke<boolean>('limusic_window_shown');
 export const showLimusicWindow = (show: boolean) => invoke<void>('show_limusic_window', { show });
@@ -656,6 +658,8 @@ export interface SkinPayload {
 		mbBg?: string;
 		mbFg?: string;
 		font?: string;
+		/** YTMinamp's extension: the EQ slider backgrounds' see-through colour (skin/spritesheet.js). */
+		ytminampTransparent?: string;
 	};
 	/** genex.bmp's colours (the Media Library's); none leaves the library in Limusic's theme. */
 	genex: SkinGenex | null;

@@ -64,8 +64,13 @@ export function analyzerMoving(columns) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {[number, number, number][] | null} skinColors the skin's viscolor.txt
  * @param {ArrayLike<number> | null} columns latest 75 analyzer columns, or null for silence
+ * @param {boolean} [frozen] paused: the last frame again, bars and peaks held where they were
  */
-export function drawAnalyzer(ctx, skinColors, columns) {
+export function drawAnalyzer(ctx, skinColors, columns, frozen = false) {
+	if (frozen && box) {
+		ctx.drawImage(box, VIS_POS.x, VIS_POS.y);
+		return;
+	}
 	const colors = palette(skinColors);
 	sample.fill(0);
 	if (columns) sample.set(Array.prototype.slice.call(columns, 0, 75));

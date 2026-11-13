@@ -7,7 +7,7 @@ import {
 	CLUTTER_BUTTONS,
 	ABOUT_POS,
 	CLUTTER_POS,
-	MARQUEE_POS,
+	MARQUEE_HIT,
 	EQ_TOGGLE_POS,
 	MINIMIZE_BUTTON_POS,
 	OPTIONS_BUTTON_POS,
@@ -176,8 +176,9 @@ export function toggleVisualizer() {
 /** @param {HTMLCanvasElement} canvas @param {MouseEvent} event */
 function canvasPoint(canvas, event) {
 	const rect = canvas.getBoundingClientRect();
-	const scaleX = canvas.width / rect.width;
-	const scaleY = canvas.height / rect.height;
+	// CSS px, not the backing store's: that's at device resolution (pixels.js `prepareCanvas`).
+	const scaleX = (canvas.clientWidth || rect.width) / rect.width;
+	const scaleY = (canvas.clientHeight || rect.height) / rect.height;
 	return { x: (event.clientX - rect.left) * scaleX, y: (event.clientY - rect.top) * scaleY };
 }
 
@@ -389,7 +390,7 @@ function tooltipAt(hit) {
 	}
 	const x = hit.px;
 	const y = hit.py;
-	if (hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+	if (hits(MARQUEE_HIT, MARQUEE_HIT, x, y)) {
 		if (updateMessageShowing()) return 'A new YTMinamp build is out: click for the details';
 		const now = playback.now;
 		const tip = now ? songTip({ title: now.title, artists: now.artists, album: now.album ?? undefined, duration: now.duration }) : 'Nothing playing';
@@ -545,7 +546,7 @@ export function attachInput(canvas, host) {
 			// The picture's menu; its frame's is the main menu, like every frame's. (The lyrics'
 			// own menu is the lyrics view's, laid over all but their frame: WinampLyricsView.)
 			host.showMenu({ kind: 'art' }, at);
-		} else if (hit?.kind === 'main' && hits(MARQUEE_POS, MARQUEE_POS, hit.px, hit.py)) {
+		} else if (hit?.kind === 'main' && hits(MARQUEE_HIT, MARQUEE_HIT, hit.px, hit.py)) {
 			host.showMenu({ kind: 'title' }, at);
 		} else if (hit?.kind === 'main' && hits(VIS_POS, VIS_POS, hit.px, hit.py)) {
 			host.showMenu({ kind: 'vis' }, at);
@@ -651,12 +652,12 @@ export function attachInput(canvas, host) {
 			return;
 		}
 		// The update notice in the title: a click opens the update dialog.
-		if (event.detail === 1 && updateMessageShowing() && hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+		if (event.detail === 1 && updateMessageShowing() && hits(MARQUEE_HIT, MARQUEE_HIT, x, y)) {
 			showUpdateDialog();
 			return;
 		}
 		// The song title: double-click for file info, as in Winamp.
-		if (event.detail >= 2 && hits(MARQUEE_POS, MARQUEE_POS, x, y)) {
+		if (event.detail >= 2 && hits(MARQUEE_HIT, MARQUEE_HIT, x, y)) {
 			showNowFileInfo();
 			return;
 		}

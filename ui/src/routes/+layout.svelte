@@ -63,8 +63,11 @@
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { auth, initApp, np, playback, prefs, ui } from '$lib/player.svelte';
-	import { isLocalId } from '$lib/api';
+	import { auth, initApp, np, playback, prefs, toast, ui } from '$lib/player.svelte';
+	import { isLocalId, onOpenLink } from '$lib/api';
+	import { isSpotifyLink } from '$lib/import.svelte';
+	import { parseYtLink } from '$lib/ytlink';
+	import { openLink } from '$lib/skin/playlistActions.js';
 	import { video } from '$lib/video.svelte';
 	import { initWin, windowCorners } from '$lib/win.svelte';
 	import { initZoom } from '$lib/zoom.svelte';
@@ -248,9 +251,26 @@
 			// Both secondary windows get the transport keys too. No zoom: both are fixed-size.
 			const teardownMiniApp = initApp(true);
 			const teardownMiniKeys = initShortcuts(true);
+			// `limusic-app <link>` against an already-running instance in Winamp mode (Rust's
+			// single-instance callback keeps Winamp up and sends it here instead of LinkDialog's
+			// window, which this one never renders): play it in place, same as the ADD menu's Open
+			// URL (OpenUrlWindow.svelte). Only this window, not every floating panel too.
+			const unlistenOpenLink = isWinamp
+				? onOpenLink((args) => {
+						const given = args.filter((a) => !a.startsWith('-'));
+						const url = given.find((a) => isSpotifyLink(a) || parseYtLink(a));
+						if (!url) return;
+						openLink(url)
+							.then((result) => {
+								if (result !== 'played') toast.error(t('dialogs.link.invalid_link'));
+							})
+							.catch((e) => console.error('open link failed', e));
+					})
+				: null;
 			return () => {
 				teardownMiniApp();
 				teardownMiniKeys();
+				unlistenOpenLink?.then((f) => f());
 			};
 		}
 		// First: it reveals the window (see initWin).

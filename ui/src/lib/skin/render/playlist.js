@@ -4,6 +4,7 @@
 // pledit.txt. Coordinates: Webamp's skinSprites.ts PLEDIT table and playlist-window.css.
 
 import { drawText } from './marquee.js';
+import { blinkHidden } from './numbers.js';
 import { CHAR_W, MARQUEE_SEPARATOR, MARQUEE_STEP_MS } from './sprites.js';
 import { isLit } from '../focus.js';
 import { uiState } from '../uiState.js';
@@ -376,8 +377,9 @@ function drawListPanel(ctx, sprites, pledit, { kind, items, current, view, oy, s
  * @param {CanvasRenderingContext2D} ctx @param {ImageBitmap} text @param {number} x @param {number} y
  */
 function drawMiniTime(ctx, text, x, y) {
-	// Not blinking while paused, as Winamp's does: the main window's clock here doesn't either.
-	if (!playback.now) return;
+	// Paused, it blinks with the main window's clock, as Winamp's does.
+	if (!playback.now || uiState.stopped) return;
+	if (playback.paused && uiState.pauseBlink && blinkHidden(performance.now())) return;
 	const remaining = uiState.timeRemaining && playback.duration > 0;
 	const secs = Math.max(0, Math.floor(remaining ? playback.duration - playback.position : playback.position));
 	const m = Math.min(99, Math.floor(secs / 60));
