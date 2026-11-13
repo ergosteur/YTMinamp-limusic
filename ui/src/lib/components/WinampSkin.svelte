@@ -498,16 +498,18 @@
 	{/if}
 	{#if libraryRect}
 		<!-- At its own size in double size: Limusic's pages doubled would show next to nothing. -->
+		<!-- Placed by an unzoomed box: CSS zoom scales the zoomed element's own left/top too. -->
 		{@const f = uiState.doubleSize ? 2 : 1}
 		<div
 			class="absolute"
 			style:left="{libraryRect.x}px"
 			style:top="{libraryRect.y}px"
-			style:width="{libraryRect.w * f}px"
-			style:height="{libraryRect.h * f}px"
-			style:zoom={1 / f}
+			style:width="{libraryRect.w}px"
+			style:height="{libraryRect.h}px"
 		>
-			<LibraryPages {page} />
+			<div style:width="{libraryRect.w * f}px" style:height="{libraryRect.h * f}px" style:zoom={1 / f}>
+				<LibraryPages {page} />
+			</div>
 		</div>
 	{/if}
 	{#if lyricsRect}
