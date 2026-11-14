@@ -228,7 +228,7 @@ pub struct DiscordHandle {
 
 impl DiscordHandle {
     pub fn set_track(&self, item: &SongItem) {
-        let local = crate::local::is_local_song(&item.video_id);
+        let local = crate::radio::not_youtube(&item.video_id);
         let _ = self.tx.send(Msg::Track(Box::new(Track {
             video_id: item.video_id.clone(),
             title: item.title.clone(),

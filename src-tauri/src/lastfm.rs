@@ -542,6 +542,11 @@ pub fn resolve(t: &Track, cfg: &ScrobbleConfig) -> Resolved {
         rules: Vec::new(),
         errors: Vec::new(),
     };
+    // YTMinamp: a radio station is not scrobbled: its titles are whatever the station sends.
+    if crate::radio::is_station(&t.video_id) {
+        r.skip = Some("incomplete");
+        return r;
+    }
     let compiled: Vec<Option<regex::Regex>> = cfg
         .rules
         .iter()

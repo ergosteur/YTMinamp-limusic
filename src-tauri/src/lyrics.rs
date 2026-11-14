@@ -262,7 +262,7 @@ async fn preview(
 /// `Ok(None)` for a local file: its duration came off the file itself, and YouTube has nothing for
 /// it. `Err` when `next()` failed, which is not the same as YouTube having no lyrics.
 async fn resolve(state: &AppState, req: &mut LyricsRequest) -> Result<Option<NextResult>, String> {
-    if crate::local::is_local_song(&req.video_id) {
+    if crate::radio::not_youtube(&req.video_id) {
         return Ok(None);
     }
     let client = state.clients.get(innertube::METADATA_CLIENT).ok_or("no metadata client")?;
@@ -885,7 +885,7 @@ struct SimpMusicTrack {
 /// upload itself rather than on title and length, so its timings are for the cut actually playing,
 /// a music video's intro included. Community-written, hence below the curated ones by default.
 async fn simpmusic_get(req: &LyricsRequest) -> Result<Option<Lyrics>, reqwest::Error> {
-    if crate::local::is_local_song(&req.video_id) {
+    if crate::radio::not_youtube(&req.video_id) {
         return Ok(None);
     }
     #[derive(Deserialize)]

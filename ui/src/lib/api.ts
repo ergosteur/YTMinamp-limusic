@@ -231,7 +231,9 @@ export const isLocalId = (id: string | undefined | null): boolean =>
 	(id.startsWith(LOCAL_SONG_PREFIX) ||
 		id.startsWith(LOCAL_ALBUM_PREFIX) ||
 		id.startsWith(LOCAL_ARTIST_PREFIX) ||
-		id.startsWith(LOCAL_PLAYLIST_PREFIX));
+		id.startsWith(LOCAL_PLAYLIST_PREFIX) ||
+		// YTMinamp: an internet radio station (radio.rs), `RADIO:<url>`.
+		id.startsWith('RADIO:'));
 
 export interface LocalLibrary {
 	/** Watched folders, as absolute paths. */

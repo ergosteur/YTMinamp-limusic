@@ -23,6 +23,7 @@
 	import { artFrame, drawAlbumArt, drawFrame, frameInset } from '../skin/render/albumArt.js';
 	import { goto } from '$app/navigation';
 	import LibraryPages from './LibraryPages.svelte';
+	import { isStation } from '../skin/radio.js';
 	import { currentPage, floatLibrary, onLibraryOpenRequest } from '../skin/library.js';
 	import { SKIN_SELECT_EVENT } from '../skin/skinBrowser.js';
 	import { isLit } from '../skin/focus.js';
@@ -354,6 +355,8 @@
 					pauseBlink: uiState.pauseBlink,
 					positionSecs: uiState.draggingSeek ? uiState.draggingPositionSecs : playback.position,
 					durationSecs: playback.duration,
+					// An internet radio station: no length, nothing to seek.
+					live: isStation(playback.now?.videoId),
 					volume: uiState.draggingVolume ? uiState.draggingVolumeValue : playback.volume,
 					balance: uiState.balance,
 					stereo: uiState.stereo,

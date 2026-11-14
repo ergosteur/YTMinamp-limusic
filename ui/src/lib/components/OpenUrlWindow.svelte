@@ -1,7 +1,7 @@
 <script>
 	// The ADD menu's Open URL dialog, a small window of its own (label "winamp-url", see
 	// +layout.svelte and winamp.rs) in the skin's generic frame: paste a YouTube / YouTube Music or
-	// Spotify link, Enter or OK plays it (playlistActions.js `openLink`), Esc or ✕ closes it. Under
+	// Spotify link or an internet radio stream or playlist URL, Enter or OK plays it (playlistActions.js `openLink`), Esc or ✕ closes it. Under
 	// the box, the kinds of link it plays.
 	import { onMount } from 'svelte';
 	import { HugeiconsIcon } from '@hugeicons/svelte';
@@ -36,7 +36,7 @@
 	/** @type {import('$lib/api').SkinPayload['pledit']} */
 	let pledit = $state({});
 	let inset = $state({ top: 20, bottom: 14, left: 11, right: 11 });
-	let status = $state('Paste a YouTube, YouTube Music or Spotify link, then press Enter');
+	let status = $state('Paste a YouTube Music, Spotify or radio stream link, then press Enter');
 	let busy = $state(false);
 	let closePressed = false;
 
@@ -75,7 +75,7 @@
 			status =
 				result === 'spotify-playlist'
 					? 'A Spotify playlist: use Import from Spotify to bring it over'
-					: "That isn't a YouTube, YouTube Music or Spotify link";
+					: "That isn't a YouTube Music, Spotify or radio stream link";
 		} catch (e) {
 			status = `Couldn't open it: ${e}`;
 		} finally {

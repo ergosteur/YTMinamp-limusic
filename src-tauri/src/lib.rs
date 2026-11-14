@@ -42,6 +42,7 @@ mod videoproxy;
 mod viz;
 mod webview;
 mod winamp;
+mod radio;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -1055,6 +1056,8 @@ pub fn run() {
             brand::latest_release,
             winamp::set_stop_after_current,
             winamp::winamp_stop,
+            radio::radio_open_file,
+            radio::radio_open_url,
             winamp::stop_after_current_set,
             winamp::limusic_window_shown,
             winamp::show_limusic_window,
@@ -1384,6 +1387,7 @@ fn spawn_event_pump(
                     state.on_lookahead_failed().await;
                 }
                 PlayerEvent::VideoFailed(audio) => state.on_video_failed(&audio).await,
+                PlayerEvent::StreamTitle(title) => state.on_stream_title(&title).await,
                 PlayerEvent::Error(msg) => {
                     tracing::error!(error = %msg, "player error");
                     let _ = app.emit("playback-error", serde_json::json!({ "message": msg }));

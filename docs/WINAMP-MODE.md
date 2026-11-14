@@ -176,11 +176,11 @@ One short menu each, kept to what Limusic's queue can do (`ui/src/lib/skin/playl
 
 | Button | Does |
 |---|---|
-| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Open YouTube Music / Spotify URL…**, **Import from Spotify…** (Limusic's importer, over the Media Library), or **Browse library…** (the Media Library at its Library page). Open URL is a small dialog (`OpenUrlWindow.svelte`; Enter or OK, the supported links listed under the box) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio. A Spotify track, album or artist is found on YouTube Music first (Limusic's `importResolve`) and played the same way. A Spotify playlist isn't played: matching it is the import, so the dialog points there |
+| ADD | **Search YouTube Music** (opens search; if it's open, focuses its box and flashes it), **Open URL (YouTube Music, Spotify, radio)…**, **Open playlist file (.m3u, .pls)…** ([Internet radio](#internet-radio)), **Import from Spotify…** (Limusic's importer, over the Media Library), or **Browse library…** (the Media Library at its Library page). Open URL is a small dialog (`OpenUrlWindow.svelte`; Enter or OK, the supported links listed under the box) that takes any link Limusic's `parseYtLink` reads (youtu.be, youtube.com, music.youtube.com) and plays it: a song now, a playlist or album in place of the queue, an artist's radio. A Spotify track, album or artist is found on YouTube Music first (Limusic's `importResolve`) and played the same way. A Spotify playlist isn't played: matching it is the import, so the dialog points there |
 | REM | Remove the selected track, or clear the queue |
 | SEL | Select all, none, or invert the selection, as in Winamp (Ctrl/Shift+click selects several) |
 | MISC | Sort what plays next by title or artist, or reverse it; Autoplay (Limusic's: more like it when the queue runs out) |
-| LIST | **Load ▸** a playlist (local and YouTube Music sections; replaces the queue), or **Save ▸** the queue as one, in the YouTube Music library (signed in) or only on this machine. Some skins label it LOAD LIST |
+| LIST | **Load ▸** a playlist file (.m3u, .pls: internet radio) or a playlist (local and YouTube Music sections; replaces the queue), or **Save ▸** the queue as one, in the YouTube Music library (signed in) or only on this machine. Some skins label it LOAD LIST |
 
 LIST and the main menu's Play ▸ never wait on YouTube Music: they show the playlists as last
 fetched and refresh them behind the menu for next time (`libraryPlaylists` in
@@ -551,6 +551,43 @@ magick -background none -density 900 rsvg:packaging/icon/ytminamp.svg -resize 10
 podman run --rm -v "$PWD":/src:Z -v /tmp:/icon:Z -w /src ytminamp-fedora-build tauri icon /icon/ytminamp-1024.png -o src-tauri/icons
 rm -rf src-tauri/icons/android src-tauri/icons/ios
 ```
+
+## Internet radio
+
+Internet radio streams play as queue rows (`src-tauri/src/radio.rs`, `ui/src/lib/skin/radio.js`).
+A station's videoId is `RADIO:<stream url>`, the way a local file's is `LOCAL:<path>`, and
+`AppState::resolve` hands mpv the URL itself.
+
+**Opening stations**
+- **From a playlist file:** LIST ▸ Load ▸ **Playlist file (.m3u, .pls)…**, ADD, or the main
+  menu's Play ▸ opens a .m3u, .m3u8 or .pls file. Its http entries replace the queue as stations,
+  named from `#EXTINF` or `TitleN`.
+- **From a pasted link:** Open URL (Ctrl+L) also takes any web link that isn't YouTube or Spotify.
+  - A playlist link (.m3u, .pls, SHOUTcast's `tunein-station.m3u`, TuneIn's `Tune.ashx`) is
+    fetched and played as its stations.
+  - Any other link plays as one stream.
+
+**While a station plays**
+- **Titles:** the stream's ICY title (mpv's `metadata/by-key/icy-title`) is shown as the song,
+  with the station name as the artist. It updates in the title, the playlist, Discord and the
+  window title.
+- **Time and seeking:** the time counts up, and the position bar has no thumb.
+- **Caching:** mpv's disk cache is off, so a long listen doesn't grow it.
+
+**Kept out of the YouTube Music features**
+- Stations aren't preloaded or crossfaded into.
+- They aren't scrobbled to Last.fm or ListenBrainz, and aren't added to the listening history.
+- No YouTube Music lyrics, ratings or Start radio for stations. LRCLIB is still asked, by the
+  ICY title.
+- Autoplay doesn't extend a queue that ends on a station.
+- LIST ▸ Save ▸ to the YouTube Music library refuses a queue with a station in it, and the title
+  says to save it as a local playlist instead. A local playlist keeps stations.
+
+**When a stream drops:** it reconnects after 2 seconds instead of moving to the next row. After 5
+drops within a minute it stops and asks the user to press play.
+
+Requests send a `YTMinamp/1.0 (Winamp-compatible; like WACUP)` User-Agent, since some stations
+turn away unknown players.
 
 ## Title, kbps, kHz
 

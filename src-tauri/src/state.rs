@@ -535,7 +535,7 @@ impl AppState {
     fn attach_video(self: &Arc<Self>, video_id: &str, is_video: bool, audio_url: &str) {
         if !is_video
             || !native_video()
-            || crate::local::is_local_song(video_id)
+            || crate::radio::not_youtube(video_id)
             || self.db.get_setting("music_videos").as_deref() != Some("true")
         {
             return;
@@ -1195,6 +1195,10 @@ impl AppState {
         is_upload: bool,
         duration_secs: i64,
     ) -> Result<PlaybackData, ResolveError> {
+        // YTMinamp: an internet radio station is its URL, never cached (radio.rs).
+        if let Some(url) = crate::radio::station_url(video_id) {
+            return crate::radio::playback_data(video_id, url).await;
+        }
         // A local file is its own "stream": no network, no cache, no extraction (local.rs).
         if let Some(path) = crate::local::song_path(video_id) {
             return crate::local::playback_data(video_id, path).map_err(|_| {
@@ -1299,7 +1303,7 @@ impl AppState {
         // one offline (where local music earns its keep) is a guaranteed-failing request.
         // Autoplay off means the song plays and the queue ends there (#238): the radio hydrated
         // below is exactly the "recommended tracks" that setting turns off.
-        let no_radio = crate::local::is_local_song(&video_id) || !self.autoplay_enabled();
+        let no_radio = crate::radio::not_youtube(&video_id) || !self.autoplay_enabled();
         let position = self.current_position();
 
         {
@@ -1526,7 +1530,7 @@ impl AppState {
         // Guarded here rather than in each menu: everything without a YouTube item behind it
         // (files on disk, the locally-built On Repeat) would otherwise reach `/next` as an id
         // YouTube has never heard of.
-        if crate::local::is_local_song(id)
+        if crate::radio::not_youtube(id)
             || id.starts_with(crate::local::ALBUM_PREFIX)
             || id.starts_with(crate::local::ARTIST_PREFIX)
             || id == ON_REPEAT_ID
@@ -1889,6 +1893,9 @@ impl AppState {
         if self.lt.is_guest().await {
             return; // the host drives track changes for guests; don't auto-advance locally
         }
+        if self.on_station_dropped().await {
+            return;
+        }
         let (has_next, primed) = {
             let mut q = self.queue.lock().await;
             match next_index(q.items.len(), q.current, q.repeat) {
@@ -2010,6 +2017,9 @@ impl AppState {
     /// PoToken-enforced/niche videos playable — before giving up and advancing the queue.
     /// Returns true when the track was retried (so the caller can skip the error toast).
     pub async fn on_track_failed(self: &std::sync::Arc<Self>) -> bool {
+        if self.on_station_dropped().await {
+            return true;
+        }
         let (video_id, client, already_retried) = {
             let q = self.queue.lock().await;
             let vid = q.items.get(q.current).map(|i| i.video_id.clone());
@@ -2065,6 +2075,55 @@ impl AppState {
         }
         self.on_track_ended().await;
         false
+    }
+
+    /// YTMinamp: the playing station named its song (ICY): retitle its row, the song with the
+    /// station as its artist, as Winamp shows a stream's, and tell everything that shows it.
+    pub async fn on_stream_title(&self, title: &str) {
+        let item = {
+            let mut q = self.queue.lock().await;
+            let cur = q.current;
+            let Some(row) = q.items.get_mut(cur).filter(|r| crate::radio::is_station(&r.video_id)) else {
+                return;
+            };
+            crate::radio::retitle(row, title);
+            row.clone()
+        };
+        self.emit_queue().await;
+        self.emit_now_playing(&item, "radio");
+    }
+
+    /// YTMinamp: the playing station's stream ended or died. A station doesn't end, so this is a
+    /// dropped connection: reopen it after a moment rather than move on, as Winamp does, unless it
+    /// keeps dropping (`radio::RECONNECTS`), and then stop on it. False when it isn't a station.
+    async fn on_station_dropped(self: &std::sync::Arc<Self>) -> bool {
+        let station = {
+            let q = self.queue.lock().await;
+            q.items.get(q.current).filter(|i| crate::radio::is_station(&i.video_id)).map(|i| i.video_id.clone())
+        };
+        let Some(id) = station else { return false };
+        if !crate::radio::RECONNECTS.allow() {
+            tracing::warn!(station = %id, "station keeps dropping, stopping");
+            let _ = self.player.stop();
+            self.queue.lock().await.lookahead_loaded = None;
+            let _ = self.app.emit("playback-state", "paused");
+            let _ = self.app.emit(
+                "playback-error",
+                serde_json::json!({ "message": "The station stopped responding. Press play to try again." }),
+            );
+            return true;
+        }
+        tracing::info!(station = %id, "station dropped, reconnecting");
+        let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(crate::radio::RECONNECT_DELAY).await;
+            if me.generation.load(Ordering::SeqCst) == gen {
+                me.queue.lock().await.lookahead_loaded = None;
+                me.start_current(gen).await;
+            }
+        });
+        true
     }
 
     /// The audio device went away under a loaded file (a PC waking from sleep re-enumerates its
@@ -2207,9 +2266,12 @@ impl AppState {
             .lock()
             .unwrap()
             .take()
-            .filter(|(vid, _)| *vid == item.video_id)
+            .filter(|(vid, _)| *vid == item.video_id && !crate::radio::is_station(vid))
             .map(|(_, pos)| pos);
         let stream_url = mpv_stream_url(&data);
+        // YTMinamp: a station streams to memory, not to a disk cache that grows while it plays.
+        let station = crate::radio::is_station(&item.video_id);
+        let _ = self.player.set_live(station);
         if let Err(e) =
             self.player.load(&stream_url, &data.headers, self.track_gain(data.loudness_db), seek)
         {
@@ -2256,6 +2318,10 @@ impl AppState {
             }
         }
         self.emit_now_playing(&item, &data.stream_client);
+        // YTMinamp: a station has no length, and mpv never says so: clear the last track's.
+        if station {
+            let _ = self.app.emit("duration", serde_json::json!({ "duration": 0.0 }));
+        }
         // The rating just emitted is whatever the row was parsed with, which for a search result
         // or a radio track is nothing at all (issue #93). Ask.
         self.refresh_rating(&item.video_id, gen);
@@ -2293,6 +2359,12 @@ impl AppState {
                 let Some(next) = next_index(q.items.len(), q.current, q.repeat) else { return };
                 if q.lookahead_loaded == Some(next) {
                     return; // already primed
+                }
+                // YTMinamp: no lookahead into or out of a station. One never ends, so nothing
+                // would follow it, and one held open paused for a whole track goes stale.
+                let station = |i: usize| q.items.get(i).is_some_and(|it| crate::radio::is_station(&it.video_id));
+                if station(q.current) || station(next) {
+                    return;
                 }
                 next
             };
@@ -2481,7 +2553,7 @@ impl AppState {
     fn refresh_rating(self: &std::sync::Arc<Self>, video_id: &str, gen: u64) {
         // Signed out there is no rating to be wrong about, and a local file is not a videoId
         // YouTube has ever heard of.
-        if !self.it.is_logged_in() || crate::local::is_local_song(video_id) {
+        if !self.it.is_logged_in() || crate::radio::not_youtube(video_id) {
             return;
         }
         let me = self.clone();
@@ -2835,7 +2907,8 @@ impl AppState {
         // watch-history ping has always done the same). One extra count per launch, for one song.
         // If it ever skews the stats, pass the `pending_seek` offset into the latch and skip the
         // record when the play didn't start near zero.
-        if let Some(item) = played {
+        // YTMinamp: a radio station isn't a play to count (On Repeat, stats).
+        if let Some(item) = played.filter(|i| !crate::radio::is_station(&i.video_id)) {
             if let Ok(json) = serde_json::to_string(&item) {
                 let mut l = self.listen.lock().unwrap();
                 l.row = self.db.record_listen(&item.video_id, &json, now_secs(), l.heard as i64);
@@ -2946,6 +3019,10 @@ impl AppState {
             // Nothing to continue from when the queue ends on a local file: its path is not a
             // videoId, and a queue of local music is exactly the case that has to work offline.
             if q.radio_seed.is_none() && crate::local::is_local_song(&last.video_id) {
+                return 0;
+            }
+            // YTMinamp: a station doesn't end, so there is nothing to continue after it.
+            if crate::radio::is_station(&last.video_id) {
                 return 0;
             }
             let seed = q.radio_seed.clone().unwrap_or_else(|| format!("RDAMVM{}", last.video_id));

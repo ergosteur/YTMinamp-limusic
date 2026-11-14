@@ -223,8 +223,8 @@ function drawPosbar(ctx, sprites, uiState) {
   if (!sheet) return;
   const track = POSBAR.track;
   ctx.drawImage(sheet, track.x, track.y, track.w, track.h, POSBAR_POS.x, POSBAR_POS.y, track.w, track.h);
-  // Stopped, there's nothing to seek: Winamp hides the thumb.
-  if (uiState.stopped) return;
+  // Stopped, or a live stream, there's nothing to seek: Winamp hides the thumb.
+  if (uiState.stopped || uiState.live) return;
 
   const percent = uiState.durationSecs > 0 ? uiState.positionSecs / uiState.durationSecs : 0;
   const thumbLeft = Math.round(Math.max(0, Math.min(1, percent)) * POSBAR_THUMB_TRAVEL);

@@ -111,6 +111,7 @@ import { lt } from '$lib/lt.svelte';
 import { invertSelection, markedRows, selectAll, selectNone } from './selection.js';
 import { loadPrefs, pref, savePref } from './prefs.js';
 import { uiState } from './uiState.js';
+import { openPlaylistFile } from './radio.js';
 import { PATTERN_NAMES } from './testPattern.js';
 import {
 	clearUpcoming,
@@ -664,7 +665,8 @@ export function showSearchKindMenu(at) {
 function addItems() {
 	return [
 		{ text: 'Search YouTube Music', accel: 'Ctrl+J', action: requestSearch },
-		{ text: 'Open YouTube Music / Spotify URL…', action: openUrlDialog },
+		{ text: 'Open URL (YouTube Music, Spotify, radio)…', action: openUrlDialog },
+		{ text: 'Open playlist file (.m3u, .pls)…', action: openPlaylist },
 		{ text: 'Import from Spotify…', action: importFromSpotify },
 		SEPARATOR,
 		// Limusic's own Library page, in the Media Library.
@@ -672,6 +674,8 @@ function addItems() {
 	];
 }
 
+// Internet radio stations from a playlist file (radio.js).
+const openPlaylist = () => openPlaylistFile().catch(log('open playlist file'));
 const importFromSpotify = () => openLibrary(undefined, { kind: 'import' }).catch(log('import from spotify'));
 const listenTogether = () => openLibrary(undefined, { kind: 'listen-together' }).catch(log('listen together'));
 
@@ -762,7 +766,7 @@ export function showPlaylistMenu(which, at) {
 			]);
 			return {
 				items: [
-					{ text: 'Load', items: load },
+					{ text: 'Load', items: [{ text: 'Playlist file (.m3u, .pls)…', action: openPlaylist }, SEPARATOR, ...load] },
 					{
 						text: 'Save',
 						items: [
@@ -1062,7 +1066,8 @@ export function showMainMenu(switchSkin, at) {
 				{
 					text: 'Play',
 					items: [
-						{ text: 'YouTube Music / Spotify URL…', accel: 'Ctrl+L', action: openUrlDialog },
+						{ text: 'URL (YouTube Music, Spotify, radio)…', accel: 'Ctrl+L', action: openUrlDialog },
+						{ text: 'Playlist file (.m3u, .pls)…', action: openPlaylist },
 						{ text: 'Search…', accel: 'Ctrl+J', action: requestSearch },
 						{ text: 'Playlist from Library', items: library }
 					]

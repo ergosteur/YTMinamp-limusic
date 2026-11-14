@@ -8,6 +8,7 @@ import { parseYtLink } from '$lib/ytlink';
 import { flashMarquee } from './skinApi.js';
 import { uiState } from './uiState.js';
 import { markedRows, selectNone } from './selection.js';
+import { isStation, openStationUrl } from './radio.js';
 
 /** Remove the selected tracks that are still to come, last first so the indices stay valid. */
 export async function removeSelected() {
@@ -159,6 +160,11 @@ export async function loadPlaylist(/** @type {import('$lib/api').BrowseItem} */ 
 export async function saveQueue(local) {
 	const items = playback.queue.items;
 	if (!items.length) return flashMarquee('The queue is empty');
+	// A station or a file on disk has no YouTube identity: refuse rather than save part of it.
+	if (!local && items.some((s) => api.isLocalId(s.video_id))) {
+		const what = items.some((s) => isStation(s.video_id)) ? 'Radio stations' : 'Local files';
+		return flashMarquee(`${what} can't go in a YouTube Music playlist: save it as a local playlist`, 8_000);
+	}
 	const stamp = new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 	flashMarquee('Saving playlist...');
 	const id = await api.createPlaylist(`Winamp queue ${stamp}`, local);
@@ -174,14 +180,15 @@ export async function saveQueue(local) {
  * it, as a click in Limusic does), a playlist or album in place of the queue, an artist's radio.
  * A Spotify track, album or artist is found on YouTube Music first, as Limusic's Open link does
  * (`openSpotifyLink`). A Spotify playlist is only answered: matching it track by track is the
- * import, a flow of its own (Import from Spotify).
+ * import, a flow of its own (Import from Spotify). Any other web URL is internet radio: a stream,
+ * or a playlist of them (radio.js).
  * @param {string} url
  * @returns {Promise<'played' | 'not-a-link' | 'spotify-playlist'>}
  */
 export async function openLink(url) {
 	if (isSpotifyLink(url)) return playSpotify(url.trim());
 	const target = parseYtLink(url);
-	if (!target) return 'not-a-link';
+	if (!target) return !/youtu\.?be/i.test(url) && (await openStationUrl(url)) ? 'played' : 'not-a-link';
 	await playTarget(target);
 	return 'played';
 }

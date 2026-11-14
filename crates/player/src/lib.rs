@@ -65,6 +65,9 @@ pub enum PlayerEvent {
     /// worth trying. The open is a network round trip, so a skip or a crossfade can land first,
     /// and the file named is then no longer the one playing.
     VideoFailed(String),
+    /// A live stream (internet radio) named what it is playing now: its ICY `StreamTitle`
+    /// (mpv's `icy-title`). Sent when it changes; YTMinamp's stations show it.
+    StreamTitle(String),
     Error(String),
 }
 
@@ -311,6 +314,8 @@ fn spawn_deck_events(mpv: &Arc<Mpv>, deck: usize, decks: Arc<Decks>) -> Result<(
     ev.observe_property("duration", Format::Double, 1)?;
     ev.observe_property("pause", Format::Flag, 2)?;
     ev.observe_property("idle-active", Format::Flag, 3)?;
+    // YTMinamp: a radio stream's current song (ICY metadata). Unavailable for everything else.
+    ev.observe_property("metadata/by-key/icy-title", Format::String, 4)?;
     std::thread::Builder::new()
         .name(format!("mpv-events-{deck}"))
         .spawn(move || event_loop(ev, deck, decks))
@@ -586,6 +591,14 @@ impl Player {
     /// for as long as this is on.
     pub fn set_keep_open(&self, on: bool) -> Result<(), Error> {
         self.mpv().set_property("keep-open", if on { "always" } else { "no" })?;
+        Ok(())
+    }
+
+    /// YTMinamp: the next file loaded is a live stream (internet radio), or not. A stream never
+    /// ends, so its disk cache would grow for as long as it plays: streams cache in memory, within
+    /// the demuxer's byte limits. Takes effect at the next `load`.
+    pub fn set_live(&self, live: bool) -> Result<(), Error> {
+        self.mpv().set_property("cache-on-disk", if live { "no" } else { "yes" })?;
         Ok(())
     }
 
@@ -876,6 +889,17 @@ fn event_loop(mut ev: EventContext, deck: usize, decks: Arc<Decks>) {
                     } => {
                         duration = d;
                         Some(PlayerEvent::Duration(d))
+                    }
+                    Event::PropertyChange {
+                        name: "metadata/by-key/icy-title",
+                        change: PropertyData::Str(t),
+                        ..
+                    } => Some(PlayerEvent::StreamTitle(t.to_owned())),
+                    // YTMinamp: a file without a length (a live stream) never reports one, so
+                    // the last file's would linger and time a crossfade out of the stream.
+                    Event::StartFile => {
+                        duration = 0.0;
+                        None
                     }
                     Event::PropertyChange {
                         name: "pause", change: PropertyData::Flag(p), ..
