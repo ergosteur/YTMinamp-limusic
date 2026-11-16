@@ -1,8 +1,9 @@
-# Build environment for a native Fedora 44 binary: links against the same system libraries
-# (webkit2gtk4.1, mpv-libs, gtk3) a Fedora 44 desktop already has, so the result
+# Build environment for a native Fedora binary (release set by FEDORA, see scripts/build-fedora.sh):
+# links against the same system libraries (webkit2gtk4.1, mpv-libs, gtk3) that release already has, so the result
 # runs there directly — no Nix. Used by scripts/build-fedora.sh (the bare binary, or an RPM:
 # the tray's appindicator is what Tauri's bundler insists on finding).
-FROM registry.fedoraproject.org/fedora:44
+ARG FEDORA=44
+FROM registry.fedoraproject.org/fedora:${FEDORA}
 
 RUN dnf -y install \
       gcc gcc-c++ make pkgconf-pkg-config git curl mold \

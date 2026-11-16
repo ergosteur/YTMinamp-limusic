@@ -729,10 +729,19 @@ Vite server.
 ### A native Fedora binary (no Nix)
 
 ```bash
-scripts/build-fedora.sh      # rootless podman, Fedora 44 image → dist/ytminamp (symbols kept)
+scripts/build-fedora.sh      # rootless podman, Fedora 45 image → dist/ytminamp (symbols kept)
 ./dist/ytminamp
-scripts/build-fedora.sh rpm  # stripped, plus dist/ytminamp-<version>-<N>.x86_64.rpm
+scripts/build-fedora.sh rpm  # Fedora 44 image, stripped, plus dist/ytminamp-<version>-<N>.x86_64.rpm
 ```
+
+`FEDORA=<release>` overrides the release. The test build defaults to 45 (the dev machine) and the
+release RPM to 44: a binary built on 45 links `libnettle.so.9`, glibc 2.44 and the like, so it does
+not run on 44, while a 44 one asks for `libnettle.so.8` and `libssl.so.3` and resolves them on 45
+through the `nettle3.10` and `openssl3-libs` compat packages. The RPM names the OpenSSL sonames in
+`rpm.depends` (`tauri.conf.json`), as Tauri's bundler does not scan the binary for libraries: without
+them a clean 45 installs it and it fails to start. Each release has its own image (`ytminamp-fedora-build`, `-f45`) and
+cargo target volume, so the two never mix. `FEDORA=45 scripts/build-fedora.sh rpm` makes a 45 RPM
+under the same file name: do not upload it in place of the 44 one.
 
 The plain build also packs the same unstripped binary as `dist/ytminamp-debug.x86_64.rpm`, to
 install on another Fedora (`packaging/fedora/ytminamp-debug.spec`, which reads its version,
@@ -744,7 +753,7 @@ per checkout (`ytminamp-target-<directory name>`): every checkout mounts at the 
 container, and a shared one would hand one checkout another's newer build of a crate.
 
 It links against the distro's own webkit2gtk4.1 and mpv-libs (both present on a
-stock Fedora 44 desktop). App data lives under the `com.ytminamp.desktop` identifier, separate
+stock Fedora 44 or 45 desktop). App data lives under the `com.ytminamp.desktop` identifier, separate
 from an installed Limusic. The default skin, Winamp 2.91's own, is compiled in
 (`src-tauri/skins/base-2.91.wsz`).
 

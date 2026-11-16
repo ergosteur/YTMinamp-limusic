@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Build a release binary for Fedora 44 inside a rootless podman container — no Nix and no host
-# toolchain needed. Output: dist/ytminamp, linked against Fedora 44's system libraries.
-# Runtime needs (all in a stock Fedora 44 desktop): webkit2gtk4.1, mpv-libs, gtk3.
+# Build a release binary for Fedora inside a rootless podman container — no Nix and no host
+# toolchain needed. Output: dist/ytminamp, linked against that release's system libraries.
+# Runtime needs (all in a stock Fedora desktop): webkit2gtk4.1, mpv-libs, gtk3.
+#
+# FEDORA picks the release. The test build defaults to 45 (the dev machine); `rpm`, the release
+# RPM, defaults to 44: its soname dependencies (libnettle.so.8, ...) resolve on 45 through compat
+# packages, while a binary built on 45 does not run on 44. FEDORA=45 scripts/build-fedora.sh rpm
+# makes a 45 one (same file name: do not upload it in place of the 44 one).
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-image=ytminamp-fedora-build
 # `rpm`: a release RPM into dist/ (stripped, like upstream's release builds).
 # Otherwise: dist/ytminamp with symbols kept, so a hang or crash can be read (eu-stack,
 # coredumpctl), and the same build as dist/ytminamp-debug.x86_64.rpm, to install on any Fedora.
@@ -15,18 +19,24 @@ case "$mode" in
   rpm) strip=symbols; bundle=(--bundles rpm); rpm_as= ;;
   *) echo "usage: $0 [binary|rpm]" >&2; exit 2 ;;
 esac
+[ "$mode" = rpm ] && fedora_default=44 || fedora_default=45
+fedora="${FEDORA:-$fedora_default}"
+# 44 keeps the original image and target volume names, 45 gets its own: cargo does not notice
+# a system library changing under it, so a shared target dir would mix the two.
+if [ "$fedora" = 44 ]; then suffix=; else suffix="-f$fedora"; fi
+image="ytminamp-fedora-build$suffix"
 
 # The UI is already built: skip tauri.conf.json's `pnpm build` hook. No updater artifacts: the fork
 # has no updater (tauri.conf.json), and they need a signing key.
 config='{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
 
-podman build -t "$image" -f "$repo/packaging/fedora/Containerfile" "$repo/packaging/fedora"
+podman build --build-arg "FEDORA=$fedora" -t "$image" -f "$repo/packaging/fedora/Containerfile" "$repo/packaging/fedora"
 mkdir -p "$repo/dist"
 
 # Named volumes keep the cargo registry, pnpm store and target dir between runs. One target dir per
 # checkout: every checkout mounts at /src, and cargo decides staleness by file times, so a shared
 # one hands this checkout another one's newer build of a crate (the dev worktree's player, say).
-target="ytminamp-target-$(basename "$repo")"
+target="ytminamp-target-$(basename "$repo")$suffix"
 podman run --rm \
   -v "$repo":/src:Z \
   -v ytminamp-cargo-registry:/root/.cargo/registry \
@@ -63,5 +73,5 @@ podman run --rm \
     done
   '
 
-echo "built: $repo/dist/ytminamp"
+echo "built (Fedora $fedora): $repo/dist/ytminamp"
 if [ -n "$rpm_as" ]; then echo "built: $repo/dist/$rpm_as"; else ls "$repo"/dist/*.rpm 2>/dev/null || true; fi
